@@ -1,0 +1,266 @@
+"""
+Main JD Agent orchestration module.
+
+Coordinates all components to process job descriptions and generate interview questions.
+"""
+
+import asyncio
+import logging
+from typing import List, Optional
+from datetime import datetime
+
+from .components.email_collector import EmailCollector
+from .components.jd_parser import JDParser, JobDescription
+from .components.scraping_agent import ScrapingAgent
+from .components.prompt_engine import PromptEngine
+from .components.question_bank import QuestionBank
+from .utils.config import Config
+from .utils.database import Database
+from .utils.logger import setup_logger
+
+logger = logging.getLogger(__name__)
+
+
+class JDAgent:
+    """
+    Main JD Agent class that orchestrates the entire pipeline.
+    """
+    
+    def __init__(self, config: Config):
+        """
+        Initialize the JD Agent with all components.
+        
+        Args:
+            config: Configuration object
+        """
+        self.config = config
+        self.database = Database(config.database_path)
+        
+        # Initialize components
+        self.email_collector = EmailCollector(config)
+        self.jd_parser = JDParser()
+        self.scraping_agent = ScrapingAgent(config, self.database)
+        self.prompt_engine = PromptEngine(config)
+        self.question_bank = QuestionBank()
+        
+        logger.info("JD Agent initialized successfully")
+    
+    async def process_single_jd(self, job_description_text: str, company: str = "Unknown") -> List[dict]:
+        """
+        Process a single job description and generate interview questions.
+        
+        Args:
+            job_description_text: Raw job description text
+            company: Company name
+            
+        Returns:
+            List[dict]: Generated interview questions
+        """
+        logger.info(f"Processing job description for {company}")
+        
+        try:
+            # 1. Parse job description
+            logger.info("1. Parsing job description...")
+            jd = self.jd_parser.parse_job_description(job_description_text, company)
+            logger.info(f"✅ Parsed: {jd.company} - {jd.role}")
+            logger.info(f"   Location: {jd.location}")
+            logger.info(f"   Experience: {jd.experience_years} years")
+            logger.info(f"   Skills: {', '.join(jd.skills[:5])}")
+            
+            # 2. Mine knowledge using LangGraph-based scraping agent
+            logger.info("2. Mining knowledge from various sources...")
+            scraped_content = await self.scraping_agent.run_scraping_workflow(jd)
+            logger.info(f"✅ Found {len(scraped_content)} relevant content pieces")
+            
+            # 3. Generate questions
+            logger.info("3. Generating interview questions...")
+            questions = []
+            if scraped_content and self.prompt_engine.client:
+                questions = await self.prompt_engine.generate_questions(jd, scraped_content)
+                logger.info(f"✅ Generated {len(questions)} questions")
+            else:
+                logger.warning("No content found or OpenAI client not available")
+            
+            # 4. Add questions to question bank
+            logger.info("4. Processing questions...")
+            for question in questions:
+                self.question_bank.add_question(question)
+            
+            # 5. Export questions
+            logger.info("5. Exporting questions...")
+            export_files = self.question_bank.export_questions(
+                jd.company, jd.role, self.config.export_dir
+            )
+            logger.info(f"✅ Exported to: {', '.join(export_files)}")
+            
+            # 6. Print statistics
+            self._print_statistics(jd, scraped_content, questions)
+            
+            return questions
+            
+        except Exception as e:
+            logger.error(f"Error processing job description: {e}")
+            return []
+    
+    async def process_emails(self, max_emails: int = 10) -> List[dict]:
+        """
+        Process job description emails and generate interview questions.
+        
+        Args:
+            max_emails: Maximum number of emails to process
+            
+        Returns:
+            List[dict]: Generated interview questions
+        """
+        logger.info(f"Processing up to {max_emails} job description emails")
+        
+        all_questions = []
+        
+        try:
+            # 1. Collect emails
+            logger.info("1. Collecting job description emails...")
+            emails = self.email_collector.fetch_job_description_emails(max_emails)
+            logger.info(f"✅ Found {len(emails)} job description emails")
+            
+            # 2. Process each email
+            for i, email in enumerate(emails, 1):
+                logger.info(f"Processing email {i}/{len(emails)}")
+                
+                try:
+                    # Extract job description from email
+                    jd_text = self.email_collector.extract_job_description_from_email(email)
+                    if not jd_text:
+                        logger.warning(f"No job description found in email {i}")
+                        continue
+                    
+                    # Process the job description
+                    questions = await self.process_single_jd(jd_text, email.get('company', 'Unknown'))
+                    all_questions.extend(questions)
+                    
+                    # Add delay between processing
+                    await asyncio.sleep(2)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing email {i}: {e}")
+                    continue
+            
+            logger.info(f"✅ Completed processing {len(emails)} emails")
+            return all_questions
+            
+        except Exception as e:
+            logger.error(f"Error processing emails: {e}")
+            return []
+    
+    async def run_full_pipeline(self, max_emails: int = 10) -> dict:
+        """
+        Run the complete pipeline from email collection to question generation.
+        
+        Args:
+            max_emails: Maximum number of emails to process
+            
+        Returns:
+            dict: Pipeline results and statistics
+        """
+        logger.info("🚀 Starting full JD Agent pipeline")
+        
+        start_time = datetime.now()
+        
+        try:
+            # Process emails
+            questions = await self.process_emails(max_emails)
+            
+            # Calculate statistics
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            # Get usage statistics
+            usage_stats = self.scraping_agent.get_usage_stats()
+            
+            results = {
+                'total_questions': len(questions),
+                'duration_seconds': duration,
+                'questions_by_difficulty': self.question_bank.get_questions_by_difficulty(),
+                'average_relevance_score': self.question_bank.get_average_relevance_score(),
+                'usage_stats': usage_stats,
+                'export_files': self.question_bank.get_export_files()
+            }
+            
+            logger.info(f"✅ Pipeline completed in {duration:.2f}s")
+            logger.info(f"   Total questions: {len(questions)}")
+            logger.info(f"   SerpAPI calls: {usage_stats['serpapi_calls']}/{usage_stats['max_serpapi_calls']}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Pipeline failed: {e}")
+            return {
+                'error': str(e),
+                'total_questions': 0,
+                'duration_seconds': (datetime.now() - start_time).total_seconds()
+            }
+    
+    def _print_statistics(self, jd: JobDescription, scraped_content: List, questions: List[dict]):
+        """Print processing statistics."""
+        print(f"\n📊 Statistics for {jd.company} - {jd.role}:")
+        print(f"   Scraped content: {len(scraped_content)} pieces")
+        print(f"   Generated questions: {len(questions)}")
+        
+        if questions:
+            difficulties = {}
+            for q in questions:
+                diff = q.get('difficulty', 'Unknown')
+                difficulties[diff] = difficulties.get(diff, 0) + 1
+            
+            print(f"   By difficulty: {difficulties}")
+            
+            avg_score = sum(q.get('relevance_score', 0) for q in questions) / len(questions)
+            print(f"   Average relevance score: {avg_score:.2f}")
+        
+        # Print SerpAPI usage
+        usage_stats = self.scraping_agent.get_usage_stats()
+        print(f"   SerpAPI usage: {usage_stats['serpapi_calls']}/{usage_stats['max_serpapi_calls']} calls")
+        print(f"   Scraping methods: {', '.join(usage_stats['scraping_methods'])}")
+    
+    def validate_configuration(self) -> bool:
+        """
+        Validate the configuration and required components.
+        
+        Returns:
+            bool: True if configuration is valid
+        """
+        logger.info("Validating configuration...")
+        
+        errors = []
+        
+        # Check required API keys
+        if not self.config.openai_api_key:
+            errors.append("OpenAI API key not configured")
+        
+        if not self.config.serpapi_key:
+            logger.warning("SerpAPI key not configured - will use free scraping methods only")
+        
+        # Check database
+        try:
+            self.database.create_tables()
+            logger.info("✅ Database connection successful")
+        except Exception as e:
+            errors.append(f"Database error: {e}")
+        
+        # Check components
+        if not self.jd_parser:
+            errors.append("JDParser not initialized")
+        
+        if not self.scraping_agent:
+            errors.append("ScrapingAgent not initialized")
+        
+        if not self.prompt_engine:
+            errors.append("PromptEngine not initialized")
+        
+        if errors:
+            logger.error("❌ Configuration validation failed:")
+            for error in errors:
+                logger.error(f"   - {error}")
+            return False
+        
+        logger.info("✅ Configuration is valid!")
+        return True 
