@@ -5,13 +5,16 @@ Question Bank component for managing, deduplicating, scoring, and exporting inte
 import os
 import csv
 import json
+import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from collections import defaultdict
 from rapidfuzz import fuzz
+import aiofiles
 
 from ..utils.config import Config
 from ..utils.logger import get_logger
+from ..utils.embeddings import compute_similarity
 from .jd_parser import JobDescription
 
 logger = get_logger(__name__)
@@ -195,7 +198,7 @@ class QuestionBank:
     def _calculate_relevance_score(self, question: Dict[str, Any], 
                                  jd: JobDescription) -> float:
         """
-        Calculate relevance score for a question.
+        Calculate relevance score for a question using embeddings and traditional logic.
         
         Args:
             question: Question dictionary
@@ -204,7 +207,8 @@ class QuestionBank:
         Returns:
             float: Relevance score (0-1)
         """
-        score = 0.0
+        # Traditional scoring logic (40% weight)
+        traditional_score = 0.0
         
         # Check skill relevance
         question_skills = [skill.lower() for skill in question.get('skills', [])]
@@ -213,7 +217,7 @@ class QuestionBank:
         skill_matches = sum(1 for skill in question_skills if skill in jd_skills)
         if jd_skills:
             skill_score = skill_matches / len(jd_skills)
-            score += skill_score * 0.4  # 40% weight for skills
+            traditional_score += skill_score * 0.4  # 40% weight for skills
         
         # Check role relevance
         question_text = question.get('question', '').lower()
@@ -222,33 +226,133 @@ class QuestionBank:
         role_matches = sum(1 for keyword in role_keywords if keyword in question_text)
         if role_keywords:
             role_score = role_matches / len(role_keywords)
-            score += role_score * 0.3  # 30% weight for role
+            traditional_score += role_score * 0.3  # 30% weight for role
         
         # Check company relevance
         company_keywords = jd.company.lower().split()
         company_matches = sum(1 for keyword in company_keywords if keyword in question_text)
         if company_keywords:
             company_score = company_matches / len(company_keywords)
-            score += company_score * 0.2  # 20% weight for company
+            traditional_score += company_score * 0.2  # 20% weight for company
         
         # Check experience level relevance
         difficulty = question.get('difficulty', '').lower()
         experience_years = jd.experience_years
         
         if experience_years <= 2 and difficulty == 'easy':
-            score += 0.1
+            traditional_score += 0.1
         elif 3 <= experience_years <= 5 and difficulty == 'medium':
-            score += 0.1
+            traditional_score += 0.1
         elif experience_years > 5 and difficulty == 'hard':
-            score += 0.1
+            traditional_score += 0.1
         
-        return min(score, 1.0)  # Cap at 1.0
+        # Embedding-based scoring (60% weight)
+        embed_score = 0.0
+        try:
+            # Create JD context: role + skills
+            jd_context = f"{jd.role} {' '.join(jd.skills)}"
+            question_text = question.get('question', '')
+            
+            # Compute cosine similarity between JD context and question
+            embed_score = compute_similarity(jd_context, question_text)
+        except Exception as e:
+            logger.warning(f"Failed to compute embedding similarity: {e}")
+            embed_score = 0.0
+        
+        # Combine scores: 60% embedding + 40% traditional
+        final_score = (embed_score * 0.6) + (traditional_score * 0.4)
+        
+        return min(final_score, 1.0)  # Cap at 1.0
     
-    def export_questions(self, jd: JobDescription, 
-                        questions: List[Dict[str, Any]], 
-                        formats: List[str] = None) -> Dict[str, str]:
+    async def export_questions(self, jd: JobDescription, 
+                             questions: List[Dict[str, Any]], 
+                             formats: List[str] = None) -> Dict[str, str]:
         """
-        Export questions in various formats.
+        Export questions in various formats with async support.
+        
+        Args:
+            jd: Job description object
+            questions: List of questions to export
+            formats: List of export formats ('markdown', 'csv', 'json')
+            
+        Returns:
+            Dict[str, str]: Dictionary mapping format to file path
+        """
+        # Check if we're in an async context
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context, run async version
+            return await self.export_questions_async(jd, questions, formats)
+        except RuntimeError:
+            # No running loop, use sync fallback
+            return self._export_questions_sync(jd, questions, formats)
+    
+    def export_questions_sync(self, jd: JobDescription, 
+                            questions: List[Dict[str, Any]], 
+                            formats: List[str] = None) -> Dict[str, str]:
+        """
+        Synchronous version of export_questions for backward compatibility.
+        
+        Args:
+            jd: Job description object
+            questions: List of questions to export
+            formats: List of export formats ('markdown', 'csv', 'json')
+            
+        Returns:
+            Dict[str, str]: Dictionary mapping format to file path
+        """
+        return self._export_questions_sync(jd, questions, formats)
+    
+    async def export_questions_async(self, jd: JobDescription, 
+                                   questions: List[Dict[str, Any]], 
+                                   formats: List[str] = None) -> Dict[str, str]:
+        """
+        Export questions in various formats asynchronously.
+        
+        Args:
+            jd: Job description object
+            questions: List of questions to export
+            formats: List of export formats ('markdown', 'csv', 'json')
+            
+        Returns:
+            Dict[str, str]: Dictionary mapping format to file path
+        """
+        if formats is None:
+            formats = ['markdown', 'csv', 'json']
+        
+        export_files = {}
+        
+        # Create filename base
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        company_safe = jd.company.replace(' ', '_').replace('/', '_')
+        role_safe = jd.role.replace(' ', '_').replace('/', '_')
+        filename_base = f"{company_safe}_{role_safe}_{timestamp}"
+        
+        for format_type in formats:
+            try:
+                if format_type == 'markdown':
+                    file_path = await self._export_markdown_async(questions, jd, filename_base)
+                elif format_type == 'csv':
+                    file_path = await self._export_csv_async(questions, jd, filename_base)
+                elif format_type == 'json':
+                    file_path = await self._export_json_async(questions, jd, filename_base)
+                else:
+                    logger.warning(f"Unknown export format: {format_type}")
+                    continue
+                
+                export_files[format_type] = file_path
+                logger.info(f"Exported questions in {format_type} format: {file_path}")
+                
+            except Exception as e:
+                logger.error(f"Error exporting in {format_type} format: {e}")
+        
+        return export_files
+    
+    def _export_questions_sync(self, jd: JobDescription, 
+                             questions: List[Dict[str, Any]], 
+                             formats: List[str] = None) -> Dict[str, str]:
+        """
+        Synchronous fallback for exporting questions.
         
         Args:
             jd: Job description object
@@ -341,6 +445,63 @@ class QuestionBank:
         
         return file_path
     
+    async def _export_markdown_async(self, questions: List[Dict[str, Any]], 
+                                   jd: JobDescription, filename_base: str) -> str:
+        """
+        Export questions in Markdown format asynchronously.
+        
+        Args:
+            questions: List of questions
+            jd: Job description object
+            filename_base: Base filename
+            
+        Returns:
+            str: Path to exported file
+        """
+        file_path = os.path.join(self.export_dir, f"{filename_base}.md")
+        
+        content = []
+        
+        # Header
+        content.append(f"# Interview Questions for {jd.company} - {jd.role}\n\n")
+        content.append(f"**Generated on:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        content.append(f"**Total Questions:** {len(questions)}\n\n")
+        
+        # Job description summary
+        content.append("## Job Description Summary\n\n")
+        content.append(f"- **Company:** {jd.company}\n")
+        content.append(f"- **Role:** {jd.role}\n")
+        content.append(f"- **Location:** {jd.location}\n")
+        content.append(f"- **Experience Required:** {jd.experience_years} years\n")
+        content.append(f"- **Key Skills:** {', '.join(jd.skills[:10])}\n\n")
+        
+        # Group questions by difficulty
+        questions_by_difficulty = defaultdict(list)
+        for question in questions:
+            difficulty = question.get('difficulty', 'unknown')
+            questions_by_difficulty[difficulty].append(question)
+        
+        # Export questions by difficulty
+        for difficulty in ['easy', 'medium', 'hard']:
+            if difficulty in questions_by_difficulty:
+                content.append(f"## {difficulty.title()} Questions\n\n")
+                
+                for i, question in enumerate(questions_by_difficulty[difficulty], 1):
+                    content.append(f"### {i}. {question.get('question', '')}\n\n")
+                    content.append(f"**Answer:** {question.get('answer', '')}\n\n")
+                    content.append(f"**Category:** {question.get('category', 'Technical')}\n")
+                    content.append(f"**Skills:** {', '.join(question.get('skills', []))}\n")
+                    content.append(f"**Source:** {question.get('source', 'Generated')}\n")
+                    if 'relevance_score' in question:
+                        content.append(f"**Relevance Score:** {question['relevance_score']:.2f}\n")
+                    content.append("\n---\n\n")
+        
+        # Write content asynchronously
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(''.join(content))
+        
+        return file_path
+    
     def _export_csv(self, questions: List[Dict[str, Any]], 
                    jd: JobDescription, filename_base: str) -> str:
         """
@@ -381,6 +542,48 @@ class QuestionBank:
         
         return file_path
     
+    async def _export_csv_async(self, questions: List[Dict[str, Any]], 
+                              jd: JobDescription, filename_base: str) -> str:
+        """
+        Export questions in CSV format asynchronously.
+        
+        Args:
+            questions: List of questions
+            jd: Job description object
+            filename_base: Base filename
+            
+        Returns:
+            str: Path to exported file
+        """
+        file_path = os.path.join(self.export_dir, f"{filename_base}.csv")
+        
+        # Prepare CSV content
+        csv_content = []
+        
+        # Header
+        csv_content.append("difficulty,question,answer,category,skills,source,relevance_score,company,role\n")
+        
+        # Data rows
+        for question in questions:
+            row = [
+                question.get('difficulty', ''),
+                f'"{question.get("question", "").replace('"', '""')}"',  # Escape quotes
+                f'"{question.get("answer", "").replace('"', '""')}"',    # Escape quotes
+                question.get('category', ''),
+                f'"{";".join(question.get("skills", [])).replace('"', '""')}"',  # Escape quotes
+                question.get('source', ''),
+                str(question.get('relevance_score', '')),
+                f'"{jd.company.replace('"', '""')}"',  # Escape quotes
+                f'"{jd.role.replace('"', '""')}"'      # Escape quotes
+            ]
+            csv_content.append(','.join(row) + '\n')
+        
+        # Write content asynchronously
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(''.join(csv_content))
+        
+        return file_path
+    
     def _export_json(self, questions: List[Dict[str, Any]], 
                     jd: JobDescription, filename_base: str) -> str:
         """
@@ -411,6 +614,40 @@ class QuestionBank:
         
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, indent=2, ensure_ascii=False)
+        
+        return file_path
+    
+    async def _export_json_async(self, questions: List[Dict[str, Any]], 
+                               jd: JobDescription, filename_base: str) -> str:
+        """
+        Export questions in JSON format asynchronously.
+        
+        Args:
+            questions: List of questions
+            jd: Job description object
+            filename_base: Base filename
+            
+        Returns:
+            str: Path to exported file
+        """
+        file_path = os.path.join(self.export_dir, f"{filename_base}.json")
+        
+        export_data = {
+            'metadata': {
+                'company': jd.company,
+                'role': jd.role,
+                'location': jd.location,
+                'experience_years': jd.experience_years,
+                'skills': jd.skills,
+                'generated_at': datetime.now().isoformat(),
+                'total_questions': len(questions)
+            },
+            'questions': questions
+        }
+        
+        # Write content asynchronously
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(export_data, indent=2, ensure_ascii=False))
         
         return file_path
     
