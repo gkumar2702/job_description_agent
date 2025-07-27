@@ -16,14 +16,7 @@ import random
 
 import aiohttp
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from webdriver_manager.chrome import ChromeDriverManager
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from asyncio_throttle import Throttler
 
 from ..utils.config import Config
@@ -51,9 +44,12 @@ class FreeWebScraper:
         self.config = config
         self.throttler = Throttler(rate_limit=2, period=1)  # 2 requests per second
         self._session: Optional[aiohttp.ClientSession] = None
+        self._browser: Optional[Browser] = None
+        self._context: Optional[BrowserContext] = None
         
     async def __aenter__(self):
-        """Create aiohttp session when entering async context."""
+        """Create aiohttp session and browser when entering async context."""
+        # Create aiohttp session
         connector = aiohttp.TCPConnector(
             limit=10,  # Connection pool size
             limit_per_host=5,  # Max connections per host
@@ -70,13 +66,29 @@ class FreeWebScraper:
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
             }
         )
+        
+        # Launch browser once per instance
+        playwright = await async_playwright().start()
+        self._browser = await playwright.chromium.launch(headless=True)
+        self._context = await self._browser.new_context(
+            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        )
+        
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close aiohttp session when exiting async context."""
+        """Close aiohttp session and browser when exiting async context."""
         if self._session:
             await self._session.close()
             self._session = None
+            
+        if self._context:
+            await self._context.close()
+            self._context = None
+            
+        if self._browser:
+            await self._browser.close()
+            self._browser = None
         
     async def scrape_with_aiohttp(self, url: str) -> Optional[ScrapedContent]:
         """Scrape content using aiohttp (for simple pages)."""
@@ -120,113 +132,67 @@ class FreeWebScraper:
             logger.warning(f"Aiohttp scraping failed for {url}: {e}")
             return None
         
-    async def scrape_with_playwright(self, url: str) -> Optional[ScrapedContent]:
-        """Scrape content using Playwright (handles JavaScript)."""
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                
-                # Set user agent
-                await page.set_extra_http_headers({
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-                })
-                
-                # Navigate with timeout
-                await page.goto(url, wait_until='networkidle', timeout=30000)
-                
-                # Wait for content to load
-                await page.wait_for_timeout(2000)
-                
-                # Extract content
-                title = await page.title()
-                content = await page.content()
-                
-                await browser.close()
-                
-                # Parse with BeautifulSoup
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                # Remove script and style elements
-                for script in soup(["script", "style", "nav", "footer", "header"]):
-                    script.decompose()
-                
-                # Extract text content
-                text_content = soup.get_text()
-                lines = (line.strip() for line in text_content.splitlines())
-                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                text_content = ' '.join(chunk for chunk in chunks if chunk)
-                
-                return ScrapedContent(
-                    url=url,
-                    title=title,
-                    content=text_content[:5000],  # Limit content length
-                    source=self._extract_source(url),
-                    relevance_score=0.0,
-                    timestamp=time.time()
-                )
-                
-        except Exception as e:
-            logger.warning(f"Playwright scraping failed for {url}: {e}")
-            return None
-    
-    def scrape_with_selenium(self, url: str) -> Optional[ScrapedContent]:
-        """Scrape content using Selenium."""
-        driver = None
-        try:
-            chrome_options = Options()
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--window-size=1920,1080')
-            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')
+    async def scrape_dynamic(self, url: str) -> Optional[ScrapedContent]:
+        """Scrape content using Playwright with browser reuse and exponential backoff retry."""
+        if not self._context:
+            raise RuntimeError("Scraper must be used as async context manager")
             
-            driver = webdriver.Chrome(
-                service=webdriver.chrome.service.Service(ChromeDriverManager().install()),
-                options=chrome_options
-            )
-            
-            driver.set_page_load_timeout(30)
-            driver.get(url)
-            
-            # Wait for page to load
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            
-            # Extract content
-            title = driver.title
-            content = driver.page_source
-            
-            # Parse with BeautifulSoup
-            soup = BeautifulSoup(content, 'html.parser')
-            
-            # Remove unwanted elements
-            for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                element.decompose()
-            
-            # Extract text content
-            text_content = soup.get_text()
-            lines = (line.strip() for line in text_content.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text_content = ' '.join(chunk for chunk in chunks if chunk)
-            
-            return ScrapedContent(
-                url=url,
-                title=title,
-                content=text_content[:5000],
-                source=self._extract_source(url),
-                relevance_score=0.0,
-                timestamp=time.time()
-            )
-            
-        except Exception as e:
-            logger.warning(f"Selenium scraping failed for {url}: {e}")
-            return None
-        finally:
-            if driver:
-                driver.quit()
+        # Exponential backoff retry: 1s, 3s, 7s
+        retry_delays = [1, 3, 7]
+        
+        for attempt, delay in enumerate(retry_delays, 1):
+            try:
+                # Create a new page in the existing context
+                page = await self._context.new_page()
+                
+                try:
+                    # Navigate with timeout
+                    await page.goto(url, wait_until='networkidle', timeout=30000)
+                    
+                    # Wait for content to load
+                    await page.wait_for_timeout(2000)
+                    
+                    # Extract content
+                    title = await page.title()
+                    content = await page.content()
+                    
+                    # Parse with BeautifulSoup
+                    soup = BeautifulSoup(content, 'html.parser')
+                    
+                    # Remove script and style elements
+                    for script in soup(["script", "style", "nav", "footer", "header"]):
+                        script.decompose()
+                    
+                    # Extract text content
+                    text_content = soup.get_text()
+                    lines = (line.strip() for line in text_content.splitlines())
+                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                    text_content = ' '.join(chunk for chunk in chunks if chunk)
+                    
+                    return ScrapedContent(
+                        url=url,
+                        title=title,
+                        content=text_content[:5000],  # Limit content length
+                        source=self._extract_source(url),
+                        relevance_score=0.0,
+                        timestamp=time.time()
+                    )
+                    
+                finally:
+                    # Always close the page
+                    await page.close()
+                    
+            except Exception as e:
+                logger.warning(f"Playwright scraping attempt {attempt} failed for {url}: {e}")
+                
+                # If this is not the last attempt, wait before retrying
+                if attempt < len(retry_delays):
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"All {len(retry_delays)} attempts failed for {url}")
+                    return None
+        
+        return None
     
     def _extract_source(self, url: str) -> str:
         """Extract source name from URL."""
@@ -363,13 +329,9 @@ class KnowledgeMiner:
                     # First try aiohttp (fastest)
                     content = await scraper.scrape_with_aiohttp(url)
                     
-                    # If that fails, try Playwright
+                    # If that fails, try dynamic scraping
                     if not content:
-                        content = await scraper.scrape_with_playwright(url)
-                    
-                    # If that fails, try Selenium
-                    if not content:
-                        content = scraper.scrape_with_selenium(url)
+                        content = await scraper.scrape_dynamic(url)
                     
                     if content:
                         content_list.append(content)
@@ -409,7 +371,7 @@ class KnowledgeMiner:
                     for result in results["organic_results"][:3]:  # Limit to 3 results per query
                         url = result.get("link")
                         if url:
-                            content = await scraper.scrape_with_playwright(url)
+                            content = await scraper.scrape_dynamic(url)
                             if content:
                                 content_list.append(content)
             
@@ -530,7 +492,7 @@ class KnowledgeMiner:
         
         for url in common_urls:
             try:
-                content = await scraper.scrape_with_playwright(url)
+                content = await scraper.scrape_dynamic(url)
                 if content:
                     content_list.append(content)
                 
