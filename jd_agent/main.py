@@ -16,7 +16,7 @@ from .components.prompt_engine import PromptEngine
 from .components.question_bank import QuestionBank
 from .utils.config import Config
 from .utils.database import Database
-from .utils.logger import setup_logger
+from .utils.logger import get_logger
 
 logger = logging.getLogger(__name__)
 

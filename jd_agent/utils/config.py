@@ -19,6 +19,11 @@ class Config(BaseModel):
     SERPAPI_KEY: str = Field(default="", description="SerpAPI key")
     GMAIL_REFRESH_TOKEN: str = Field(default="", description="Gmail refresh token")
     
+    # OpenAI Configuration
+    OPENAI_MODEL: str = Field(default="gpt-4o", description="OpenAI model to use")
+    MAX_TOKENS: int = Field(default=2000, description="Maximum tokens for OpenAI responses")
+    TEMPERATURE: float = Field(default=0.7, description="Temperature for OpenAI responses")
+    
     # Database
     DATABASE_PATH: str = Field(default="./data/jd_agent.db", description="SQLite database path")
     

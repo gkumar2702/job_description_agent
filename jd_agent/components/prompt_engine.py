@@ -3,8 +3,10 @@ Prompt Engine component for generating interview questions using OpenAI GPT-4o.
 """
 
 import json
-from typing import List, Dict, Any, Optional
+import asyncio
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from openai import OpenAI
+from openai.types.chat import ChatCompletionChunk
 
 from ..utils.config import Config
 from ..utils.logger import get_logger
@@ -16,13 +18,14 @@ logger = get_logger(__name__)
 class PromptEngine:
     """Generates interview questions using OpenAI GPT-4o."""
     
-    def __init__(self):
+    def __init__(self, config: Config):
         """Initialize the prompt engine."""
-        if not Config.OPENAI_API_KEY:
+        self.config = config
+        if not config.OPENAI_API_KEY:
             logger.error("OpenAI API key not configured")
             self.client = None
         else:
-            self.client = OpenAI(api_key=Config.OPENAI_API_KEY)
+            self.client = OpenAI(api_key=config.OPENAI_API_KEY)
     
     def generate_questions(self, jd: JobDescription, 
                          scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -41,17 +44,48 @@ class PromptEngine:
             return []
         
         try:
+            # Run async method in sync context
+            return asyncio.run(self.generate_questions_async(jd, scraped_content))
+        except Exception as e:
+            logger.error(f"Error generating questions: {e}")
+            return []
+    
+    async def generate_questions_async(self, jd: JobDescription, 
+                                     scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Generate interview questions asynchronously based on job description and scraped content.
+        
+        Args:
+            jd: Job description object
+            scraped_content: List of scraped content from various sources
+            
+        Returns:
+            List[Dict[str, Any]]: List of generated questions
+        """
+        if not self.client:
+            logger.error("OpenAI client not available")
+            return []
+        
+        try:
             # Prepare context from scraped content
             context = self._prepare_context(scraped_content)
             
-            # Generate questions for each difficulty level
-            questions = []
-            
+            # Generate questions for each difficulty level in parallel
+            tasks = []
             for difficulty in ['easy', 'medium', 'hard']:
-                difficulty_questions = self._generate_difficulty_questions(
-                    jd, context, difficulty
-                )
-                questions.extend(difficulty_questions)
+                task = self._generate_difficulty_questions_async(jd, context, difficulty)
+                tasks.append(task)
+            
+            # Wait for all difficulty levels to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Combine all questions
+            questions = []
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Error generating questions for difficulty: {result}")
+                else:
+                    questions.extend(result)
             
             logger.info(f"Generated {len(questions)} questions for {jd.company} - {jd.role}")
             return questions
@@ -85,10 +119,10 @@ class PromptEngine:
         
         return "\n".join(context_parts)
     
-    def _generate_difficulty_questions(self, jd: JobDescription, 
-                                     context: str, difficulty: str) -> List[Dict[str, Any]]:
+    async def _generate_difficulty_questions_async(self, jd: JobDescription, 
+                                                 context: str, difficulty: str) -> List[Dict[str, Any]]:
         """
-        Generate questions for a specific difficulty level.
+        Generate questions for a specific difficulty level asynchronously with streaming.
         
         Args:
             jd: Job description object
@@ -101,22 +135,69 @@ class PromptEngine:
         prompt = self._build_prompt(jd, context, difficulty)
         
         try:
-            response = self.client.chat.completions.create(
-                model=Config.OPENAI_MODEL,
+            # Define function schema for structured output
+            function_schema = {
+                "name": "create_questions",
+                "description": "Create interview questions for the specified difficulty level",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question": {
+                                        "type": "string",
+                                        "description": "The interview question text"
+                                    },
+                                    "answer": {
+                                        "type": "string",
+                                        "description": "A detailed answer or explanation"
+                                    },
+                                    "category": {
+                                        "type": "string",
+                                        "enum": ["Technical", "Behavioral", "Problem-Solving", "System Design"],
+                                        "description": "The category of the question"
+                                    },
+                                    "skills": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "description": "List of skills being tested"
+                                    }
+                                },
+                                "required": ["question", "answer", "category", "skills"]
+                            },
+                            "description": "List of interview questions"
+                        }
+                    },
+                    "required": ["questions"]
+                }
+            }
+            
+            # Create streaming response
+            stream = self.client.chat.completions.create(
+                model=self.config.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": "You are an expert technical interviewer and software engineer."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=Config.MAX_TOKENS,
-                temperature=Config.TEMPERATURE,
-                response_format={"type": "json_object"}
+                max_tokens=self.config.MAX_TOKENS,
+                temperature=self.config.TEMPERATURE,
+                stream=True,
+                tools=[{"type": "function", "function": function_schema}],
+                tool_choice={"type": "function", "function": {"name": "create_questions"}}
             )
             
-            content = response.choices[0].message.content
-            questions_data = json.loads(content)
+            # Process the streaming response
+            questions_data = await self._process_streaming_response(stream)
+            
+            if not questions_data or 'questions' not in questions_data:
+                logger.error(f"No valid questions data received for {difficulty} difficulty")
+                return []
             
             questions = []
-            for q in questions_data.get('questions', []):
+            for q in questions_data['questions']:
                 question = {
                     'difficulty': difficulty,
                     'question': q.get('question', ''),
@@ -127,11 +208,45 @@ class PromptEngine:
                 }
                 questions.append(question)
             
+            logger.info(f"Generated {len(questions)} {difficulty} questions")
             return questions
             
         except Exception as e:
             logger.error(f"Error generating {difficulty} questions: {e}")
             return []
+    
+    async def _process_streaming_response(self, stream) -> Dict[str, Any]:
+        """
+        Process the streaming response and extract function call data.
+        
+        Args:
+            stream: OpenAI streaming response
+            
+        Returns:
+            Dict[str, Any]: Parsed function call data
+        """
+        collected_chunks = []
+        function_call_data = None
+        
+        async for chunk in stream:
+            if chunk.choices[0].delta.tool_calls:
+                for tool_call in chunk.choices[0].delta.tool_calls:
+                    if tool_call.function:
+                        if tool_call.function.name == "create_questions":
+                            if tool_call.function.arguments:
+                                collected_chunks.append(tool_call.function.arguments)
+        
+        # Combine all chunks and parse JSON
+        if collected_chunks:
+            try:
+                combined_json = ''.join(collected_chunks)
+                function_call_data = json.loads(combined_json)
+                logger.debug(f"Successfully parsed function call data: {len(combined_json)} characters")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse function call JSON: {e}")
+                logger.debug(f"Raw JSON chunks: {collected_chunks}")
+        
+        return function_call_data or {}
     
     def _build_prompt(self, jd: JobDescription, context: str, difficulty: str) -> str:
         """
@@ -179,18 +294,6 @@ For each question, provide:
 - A comprehensive answer/explanation
 - The relevant skill category
 - Specific skills being tested
-
-Return the response as a JSON object with this exact structure:
-{{
-    "questions": [
-        {{
-            "question": "The actual question text",
-            "answer": "A detailed answer or explanation",
-            "category": "Technical|Behavioral|Problem-Solving|System Design",
-            "skills": ["skill1", "skill2", "skill3"]
-        }}
-    ]
-}}
 
 Make sure the questions are tailored to this specific role and company, not generic questions.
 """
@@ -309,7 +412,7 @@ Return only the enhanced answer text, not the question.
         
         try:
             response = self.client.chat.completions.create(
-                model=Config.OPENAI_MODEL,
+                model=self.config.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": "You are an expert technical interviewer."},
                     {"role": "user", "content": prompt}
