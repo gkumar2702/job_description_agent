@@ -12,6 +12,8 @@ from ..utils.config import Config
 from ..utils.logger import get_logger
 from ..utils.context import ContextCompressor
 from ..utils.schemas import QA, QAList
+from ..utils.constants import SYSTEM_PROMPT, DIFFICULTY_DESC, QUESTION_GENERATION_TEMPLATE, QUESTION_ENHANCEMENT_TEMPLATE
+from ..utils.retry import with_openai_backoff
 from .jd_parser import JobDescription
 
 logger = get_logger(__name__)
@@ -137,11 +139,11 @@ class PromptEngine:
             function_schema["name"] = "create_questions"
             function_schema["description"] = "Create interview questions for the specified difficulty level"
             
-            # Create streaming response
-            stream = self.client.chat.completions.create(
+            # Create streaming response with retry
+            stream = self._create_chat_completion_with_retry(
                 model=self.config.OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are an expert technical interviewer and software engineer."},
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=self.config.MAX_TOKENS,
@@ -210,9 +212,14 @@ class PromptEngine:
         
         return function_call_data or {}
     
+    @with_openai_backoff
+    def _create_chat_completion_with_retry(self, **kwargs):
+        """Create chat completion with retry logic."""
+        return self.client.chat.completions.create(**kwargs)
+    
     def _build_prompt(self, jd: JobDescription, context: str, difficulty: str) -> str:
         """
-        Build the prompt for question generation.
+        Build the prompt for question generation using template.
         
         Args:
             jd: Job description object
@@ -222,45 +229,17 @@ class PromptEngine:
         Returns:
             str: Formatted prompt
         """
-        difficulty_descriptions = {
-            'easy': 'basic concepts, fundamental knowledge, and entry-level topics',
-            'medium': 'intermediate concepts, practical applications, and problem-solving',
-            'hard': 'advanced concepts, system design, complex algorithms, and senior-level topics'
-        }
-        
-        prompt = f"""
-You are an expert technical interviewer creating interview questions for a {jd.role} position at {jd.company}.
-
-Job Description Context:
-- Role: {jd.role}
-- Company: {jd.company}
-- Location: {jd.location}
-- Experience Required: {jd.experience_years} years
-- Key Skills: {', '.join(jd.skills[:10])}
-
-Difficulty Level: {difficulty.upper()}
-Focus on: {difficulty_descriptions[difficulty]}
-
-Context from existing interview resources:
-{context}
-
-Generate 5 {difficulty} interview questions that are:
-1. Relevant to the specific role and company
-2. Appropriate for the experience level
-3. Focused on the key skills mentioned
-4. Practical and realistic
-5. Varied in topic (mix of technical, behavioral, and problem-solving)
-
-For each question, provide:
-- A clear, specific question
-- A comprehensive answer/explanation
-- The relevant skill category
-- Specific skills being tested
-
-Make sure the questions are tailored to this specific role and company, not generic questions.
-"""
-        
-        return prompt
+        return QUESTION_GENERATION_TEMPLATE.format(
+            role=jd.role,
+            company=jd.company,
+            location=jd.location,
+            experience_years=jd.experience_years,
+            skills=', '.join(jd.skills[:10]),
+            difficulty_upper=difficulty.upper(),
+            difficulty_desc=DIFFICULTY_DESC[difficulty],
+            context=context,
+            difficulty=difficulty
+        )
     
     def enhance_questions_with_context(self, questions: List[Dict[str, Any]], 
                                      scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -354,29 +333,17 @@ Make sure the questions are tailored to this specific role and company, not gene
         Returns:
             Dict[str, Any]: Enhanced question
         """
-        prompt = f"""
-Enhance this interview question with additional context and examples from the provided content.
-
-Original Question: {question.get('question', '')}
-Original Answer: {question.get('answer', '')}
-
-Relevant Context:
-{relevant_content}
-
-Please enhance the answer to be more comprehensive and include:
-1. Real-world examples
-2. Additional context from the provided content
-3. More detailed explanations
-4. Practical tips or best practices
-
-Return only the enhanced answer text, not the question.
-"""
+        prompt = QUESTION_ENHANCEMENT_TEMPLATE.format(
+            question=question.get('question', ''),
+            answer=question.get('answer', ''),
+            relevant_content=relevant_content
+        )
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._create_chat_completion_with_retry(
                 model=self.config.OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are an expert technical interviewer."},
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=1000,
