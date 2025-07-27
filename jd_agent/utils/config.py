@@ -22,7 +22,8 @@ class Config(BaseModel):
     # OpenAI Configuration
     OPENAI_MODEL: str = Field(default="gpt-4o", description="OpenAI model to use")
     MAX_TOKENS: int = Field(default=2000, description="Maximum tokens for OpenAI responses")
-    TEMPERATURE: float = Field(default=0.7, description="Temperature for OpenAI responses")
+    TEMPERATURE: float = Field(default=0.3, description="Temperature for OpenAI responses (0.0-2.0)")
+    TOP_P: float = Field(default=0.9, description="Top-p sampling for OpenAI responses (0.0-1.0)")
     
     # Database
     DATABASE_PATH: str = Field(default="./data/jd_agent.db", description="SQLite database path")

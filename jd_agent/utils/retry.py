@@ -15,6 +15,19 @@ logger = get_logger(__name__)
 T = TypeVar('T')
 
 
+class MaxRetriesExceededError(Exception):
+    """Custom exception raised when maximum retries are exceeded."""
+    
+    def __init__(self, func_name: str, max_retries: int, last_exception: Exception):
+        self.func_name = func_name
+        self.max_retries = max_retries
+        self.last_exception = last_exception
+        super().__init__(
+            f"Max retries ({max_retries}) exceeded for {func_name}. "
+            f"Last exception: {type(last_exception).__name__}: {last_exception}"
+        )
+
+
 def with_backoff(
     max_retries: int = 3,
     base_delay: float = 1.0,
@@ -50,10 +63,11 @@ def with_backoff(
                     
                     if attempt == max_retries:
                         logger.error(f"Max retries ({max_retries}) exceeded for {func.__name__}: {e}")
-                        raise
+                        raise MaxRetriesExceededError(func.__name__, max_retries, e)
                     
                     delay = _calculate_delay(attempt, base_delay, max_delay, exponential_base, jitter)
                     logger.warning(f"Attempt {attempt + 1} failed for {func.__name__}: {e}. Retrying in {delay:.2f}s")
+                    logger.info(f"Retry delay: {delay:.2f}s (attempt {attempt + 1}/{max_retries + 1})")
                     time.sleep(delay)
             
             # This should never be reached, but just in case
@@ -71,10 +85,11 @@ def with_backoff(
                     
                     if attempt == max_retries:
                         logger.error(f"Max retries ({max_retries}) exceeded for {func.__name__}: {e}")
-                        raise
+                        raise MaxRetriesExceededError(func.__name__, max_retries, e)
                     
                     delay = _calculate_delay(attempt, base_delay, max_delay, exponential_base, jitter)
                     logger.warning(f"Attempt {attempt + 1} failed for {func.__name__}: {e}. Retrying in {delay:.2f}s")
+                    logger.info(f"Retry delay: {delay:.2f}s (attempt {attempt + 1}/{max_retries + 1})")
                     await asyncio.sleep(delay)
             
             # This should never be reached, but just in case

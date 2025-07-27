@@ -39,13 +39,19 @@ class PromptEngine:
         )
     
     def generate_questions(self, jd: JobDescription, 
-                         scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                         scraped_content: List[Dict[str, Any]], 
+                         **kwargs) -> List[Dict[str, Any]]:
         """
         Generate interview questions based on job description and scraped content.
         
         Args:
             jd: Job description object
             scraped_content: List of scraped content from various sources
+            **kwargs: Optional overrides for OpenAI parameters:
+                - temperature: Override temperature (0.0-2.0)
+                - top_p: Override top_p (0.0-1.0)
+                - max_tokens: Override max_tokens
+                - seed: Set seed for reproducible results
             
         Returns:
             List[Dict[str, Any]]: List of generated questions
@@ -56,19 +62,25 @@ class PromptEngine:
         
         try:
             # Run async method in sync context
-            return asyncio.run(self.generate_questions_async(jd, scraped_content))
+            return asyncio.run(self.generate_questions_async(jd, scraped_content, **kwargs))
         except Exception as e:
             logger.error(f"Error generating questions: {e}")
             return []
     
     async def generate_questions_async(self, jd: JobDescription, 
-                                     scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                                     scraped_content: List[Dict[str, Any]], 
+                                     **kwargs) -> List[Dict[str, Any]]:
         """
         Generate interview questions asynchronously based on job description and scraped content.
         
         Args:
             jd: Job description object
             scraped_content: List of scraped content from various sources
+            **kwargs: Optional overrides for OpenAI parameters:
+                - temperature: Override temperature (0.0-2.0)
+                - top_p: Override top_p (0.0-1.0)
+                - max_tokens: Override max_tokens
+                - seed: Set seed for reproducible results
             
         Returns:
             List[Dict[str, Any]]: List of generated questions
@@ -95,7 +107,7 @@ class PromptEngine:
             # Generate questions for each difficulty level in parallel
             tasks = []
             for difficulty in ['easy', 'medium', 'hard']:
-                task = self._generate_difficulty_questions_async(jd, compressed_context.content, difficulty)
+                task = self._generate_difficulty_questions_async(jd, compressed_context.content, difficulty, **kwargs)
                 tasks.append(task)
             
             # Wait for all difficulty levels to complete
@@ -116,10 +128,8 @@ class PromptEngine:
             logger.error(f"Error generating questions: {e}")
             return []
     
-
-    
     async def _generate_difficulty_questions_async(self, jd: JobDescription, 
-                                                 context: str, difficulty: str) -> List[Dict[str, Any]]:
+                                                 context: str, difficulty: str, **kwargs) -> List[Dict[str, Any]]:
         """
         Generate questions for a specific difficulty level asynchronously with streaming.
         
@@ -127,6 +137,7 @@ class PromptEngine:
             jd: Job description object
             context: Context from scraped content
             difficulty: Difficulty level ('easy', 'medium', 'hard')
+            **kwargs: Optional overrides for OpenAI parameters
             
         Returns:
             List[Dict[str, Any]]: List of questions for the difficulty level
@@ -139,19 +150,27 @@ class PromptEngine:
             function_schema["name"] = "create_questions"
             function_schema["description"] = "Create interview questions for the specified difficulty level"
             
-            # Create streaming response with retry
-            stream = self._create_chat_completion_with_retry(
-                model=self.config.OPENAI_MODEL,
-                messages=[
+            # Prepare OpenAI parameters with overrides
+            openai_params = {
+                "model": self.config.OPENAI_MODEL,
+                "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=self.config.MAX_TOKENS,
-                temperature=self.config.TEMPERATURE,
-                stream=True,
-                tools=[{"type": "function", "function": function_schema}],
-                tool_choice={"type": "function", "function": {"name": "create_questions"}}
-            )
+                "max_tokens": kwargs.get('max_tokens', self.config.MAX_TOKENS),
+                "temperature": kwargs.get('temperature', self.config.TEMPERATURE),
+                "top_p": kwargs.get('top_p', self.config.TOP_P),
+                "stream": True,
+                "tools": [{"type": "function", "function": function_schema}],
+                "tool_choice": {"type": "function", "function": {"name": "create_questions"}}
+            }
+            
+            # Add seed if provided for reproducible results
+            if 'seed' in kwargs:
+                openai_params["seed"] = kwargs['seed']
+            
+            # Create streaming response with retry
+            stream = self._create_chat_completion_with_retry(**openai_params)
             
             # Process the streaming response
             questions_data = await self._process_streaming_response(stream)
@@ -347,7 +366,8 @@ class PromptEngine:
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=1000,
-                temperature=0.7
+                temperature=self.config.TEMPERATURE,
+                top_p=self.config.TOP_P
             )
             
             enhanced_answer = response.choices[0].message.content.strip()

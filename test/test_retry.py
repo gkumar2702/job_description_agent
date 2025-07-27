@@ -7,7 +7,7 @@ import asyncio
 from unittest.mock import Mock, patch, MagicMock
 from openai import RateLimitError, APITimeoutError, APIConnectionError, OpenAIError
 
-from jd_agent.utils.retry import with_backoff, with_openai_backoff, with_gentle_backoff, with_aggressive_backoff
+from jd_agent.utils.retry import with_backoff, with_openai_backoff, with_gentle_backoff, with_aggressive_backoff, MaxRetriesExceededError
 
 
 def create_mock_openai_error(error_class, message):
@@ -59,8 +59,13 @@ class TestRetryDecorator:
         def test_func():
             return mock_func()
         
-        with pytest.raises(RateLimitError):
+        with pytest.raises(MaxRetriesExceededError) as exc_info:
             test_func()
+        
+        # Check custom exception details
+        assert exc_info.value.func_name == "test_func"
+        assert exc_info.value.max_retries == 2
+        assert isinstance(exc_info.value.last_exception, RateLimitError)
         
         assert mock_func.call_count == 3  # Initial call + 2 retries
     
@@ -183,8 +188,13 @@ class TestAsyncRetryDecorator:
         async def test_func():
             return mock_func()
         
-        with pytest.raises(RateLimitError):
+        with pytest.raises(MaxRetriesExceededError) as exc_info:
             await test_func()
+        
+        # Check custom exception details
+        assert exc_info.value.func_name == "test_func"
+        assert exc_info.value.max_retries == 2
+        assert isinstance(exc_info.value.last_exception, RateLimitError)
         
         assert mock_func.call_count == 3  # Initial call + 2 retries
     
@@ -247,6 +257,29 @@ class TestConvenienceDecorators:
         assert mock_func.call_count == 2
 
 
+class TestCustomException:
+    """Test the custom MaxRetriesExceededError exception."""
+    
+    def test_max_retries_exceeded_error_creation(self):
+        """Test that MaxRetriesExceededError is created correctly."""
+        original_error = RateLimitError("Rate limit exceeded", response=MagicMock(), body=MagicMock())
+        custom_error = MaxRetriesExceededError("test_function", 3, original_error)
+        
+        assert custom_error.func_name == "test_function"
+        assert custom_error.max_retries == 3
+        assert custom_error.last_exception == original_error
+        assert "Max retries (3) exceeded for test_function" in str(custom_error)
+        assert "RateLimitError" in str(custom_error)
+    
+    def test_max_retries_exceeded_error_inheritance(self):
+        """Test that MaxRetriesExceededError inherits from Exception."""
+        original_error = RateLimitError("Rate limit exceeded", response=MagicMock(), body=MagicMock())
+        custom_error = MaxRetriesExceededError("test_function", 3, original_error)
+        
+        assert isinstance(custom_error, Exception)
+        assert isinstance(custom_error, MaxRetriesExceededError)
+
+
 class TestRetryIntegration:
     """Test retry integration with real scenarios."""
     
@@ -278,8 +311,13 @@ class TestRetryIntegration:
             def test_func():
                 return mock_func()
             
-            with pytest.raises(RateLimitError):
+            with pytest.raises(MaxRetriesExceededError) as exc_info:
                 test_func()
+            
+            # Check custom exception details
+            assert exc_info.value.func_name == "test_func"
+            assert exc_info.value.max_retries == 1
+            assert isinstance(exc_info.value.last_exception, RateLimitError)
             
             # Should have logged an error about max retries
             assert mock_logger.error.called
