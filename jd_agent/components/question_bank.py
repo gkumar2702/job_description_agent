@@ -8,6 +8,7 @@ import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from collections import defaultdict
+from rapidfuzz import fuzz
 
 from ..utils.config import Config
 from ..utils.logger import get_logger
@@ -19,10 +20,12 @@ logger = get_logger(__name__)
 class QuestionBank:
     """Manages and exports interview questions."""
     
-    def __init__(self):
+    def __init__(self, config: Optional[Config] = None):
         """Initialize the question bank."""
         self.questions = []
-        self.export_dir = Config.get_export_dir()
+        if config is None:
+            config = Config()
+        self.export_dir = config.get_export_dir()
         os.makedirs(self.export_dir, exist_ok=True)
     
     def add_questions(self, questions: List[Dict[str, Any]]) -> None:
@@ -112,13 +115,13 @@ class QuestionBank:
         return normalized
     
     def _remove_similar_questions(self, questions: List[Dict[str, Any]], 
-                                similarity_threshold: float = 0.8) -> List[Dict[str, Any]]:
+                                similarity_threshold: int = 85) -> List[Dict[str, Any]]:
         """
-        Remove similar questions based on content similarity.
+        Remove similar questions based on content similarity using rapidfuzz.
         
         Args:
             questions: List of questions
-            similarity_threshold: Threshold for similarity (0-1)
+            similarity_threshold: Threshold for similarity (0-100)
             
         Returns:
             List[Dict[str, Any]]: Questions without similar duplicates
@@ -126,7 +129,7 @@ class QuestionBank:
         if len(questions) <= 1:
             return questions
         
-        # Simple similarity check based on word overlap
+        # Use rapidfuzz token_set_ratio for similarity checking
         unique_questions = []
         
         for i, question in enumerate(questions):
@@ -138,7 +141,7 @@ class QuestionBank:
                     existing_question.get('question', '')
                 )
                 
-                if similarity > similarity_threshold:
+                if similarity >= similarity_threshold:
                     is_similar = True
                     break
             
@@ -147,28 +150,23 @@ class QuestionBank:
         
         return unique_questions
     
-    def _calculate_similarity(self, question1: str, question2: str) -> float:
+    def _calculate_similarity(self, question1: str, question2: str) -> int:
         """
-        Calculate similarity between two questions.
+        Calculate similarity between two questions using rapidfuzz token_set_ratio.
         
         Args:
             question1: First question
             question2: Second question
             
         Returns:
-            float: Similarity score (0-1)
+            int: Similarity score (0-100)
         """
-        # Simple word-based similarity
-        words1 = set(question1.lower().split())
-        words2 = set(question2.lower().split())
+        if not question1 or not question2:
+            return 0
         
-        if not words1 or not words2:
-            return 0.0
-        
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
-        
-        return len(intersection) / len(union)
+        # Use rapidfuzz token_set_ratio for better similarity detection
+        # This handles paraphrasing, word order changes, and partial matches
+        return fuzz.token_set_ratio(question1, question2)
     
     def score_questions(self, jd: JobDescription) -> List[Dict[str, Any]]:
         """

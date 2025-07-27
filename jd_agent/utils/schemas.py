@@ -6,7 +6,18 @@ and other data formats used throughout the JD Agent application.
 """
 
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
+
+
+class Question(BaseModel):
+    """Question model for interview questions."""
+    difficulty: str
+    question: str = Field(..., min_length=10)
+    answer: str
+    category: str = "Technical"
+    skills: List[str]
+    source: str = "Generated"
+    relevance_score: Optional[float] = None
 
 
 class QA(BaseModel):
