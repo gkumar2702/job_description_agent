@@ -75,7 +75,33 @@ label:"inbox" &&         extract role, skills,     20 results (Glassdoor,
    - Create a new project
    - Enable Gmail API
    - Create OAuth 2.0 credentials
-   - Download credentials and update `.env`
+   - Download credentials JSON file and save as `credentials.json`
+   - Run: `python setup_gmail_auth.py`
+
+## 🔐 Gmail Authentication Setup
+
+If you want to use Gmail integration to automatically collect job description emails:
+
+1. **Download OAuth credentials**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select existing one
+   - Enable Gmail API
+   - Create OAuth 2.0 credentials (Desktop application)
+   - Download the JSON file
+
+2. **Set up authentication**:
+   ```bash
+   # Save the downloaded file as credentials.json in the project root
+   # Then run the setup script
+   python setup_gmail_auth.py
+   ```
+
+3. **Test the connection**:
+   ```bash
+   python setup_gmail_auth.py --test
+   ```
+
+The script will handle the OAuth flow properly on macOS and save your credentials for future use.
 
 ## 🎯 Usage
 

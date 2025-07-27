@@ -172,6 +172,8 @@ data/
 .env.local
 .env.production
 .env.staging
+credentials.json
+data/token.json
 
 # Logs
 logs/

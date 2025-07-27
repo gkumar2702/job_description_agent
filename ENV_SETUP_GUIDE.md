@@ -50,7 +50,14 @@ This guide will help you set up your `.env` file with all the necessary API keys
    - Click "Create Credentials" > "OAuth 2.0 Client IDs"
    - Choose "Desktop application"
    - Download the JSON file
-5. Extract the credentials from the JSON file
+5. Save the downloaded file as `credentials.json` in the project root directory
+6. Run the authentication setup script:
+   ```bash
+   python setup_gmail_auth.py
+   ```
+
+**Alternative Manual Setup**:
+If you prefer to set up manually, extract the credentials from the JSON file and add them to your `.env` file.
 
 **Cost**: Free for personal use
 

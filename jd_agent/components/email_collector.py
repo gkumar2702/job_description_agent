@@ -4,6 +4,9 @@ Email collector component for fetching job description emails from Gmail.
 
 import base64
 import email
+import os
+import json
+import webbrowser
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from google.auth.transport.requests import Request
@@ -32,37 +35,129 @@ class EmailCollector:
     def _authenticate(self) -> None:
         """Authenticate with Gmail API."""
         creds = None
+        token_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'token.json')
         
-        # Check if we have valid credentials
-        if Config.GMAIL_REFRESH_TOKEN:
-            creds = Credentials(
-                token=None,
-                refresh_token=Config.GMAIL_REFRESH_TOKEN,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=Config.GMAIL_CLIENT_ID,
-                client_secret=Config.GMAIL_CLIENT_SECRET,
-                scopes=self.SCOPES
-            )
+        # Check if we have valid credentials from token file
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, 'r') as token:
+                    creds = Credentials.from_authorized_user_info(json.load(token), self.SCOPES)
+                logger.info("Loaded credentials from token file")
+            except Exception as e:
+                logger.warning(f"Failed to load token file: {e}")
+        
+        # Check if we have valid credentials from environment variables
+        if not creds and Config.GMAIL_REFRESH_TOKEN:
+            try:
+                creds = Credentials(
+                    token=None,
+                    refresh_token=Config.GMAIL_REFRESH_TOKEN,
+                    token_uri="https://oauth2.googleapis.com/token",
+                    client_id=Config.GMAIL_CLIENT_ID,
+                    client_secret=Config.GMAIL_CLIENT_SECRET,
+                    scopes=self.SCOPES
+                )
+                logger.info("Loaded credentials from environment variables")
+            except Exception as e:
+                logger.warning(f"Failed to load credentials from environment: {e}")
         
         # If there are no (valid) credentials available, let the user log in
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
+                    logger.info("Refreshed expired credentials")
                 except Exception as e:
                     logger.error(f"Failed to refresh credentials: {e}")
                     creds = None
             
             if not creds:
-                logger.error("No valid Gmail credentials found. Please set up OAuth2 credentials.")
+                logger.error("No valid Gmail credentials found.")
+                self._print_oauth_instructions()
                 return
         
         try:
             self.service = build('gmail', 'v1', credentials=creds)
             logger.info("Successfully authenticated with Gmail API")
+            
+            # Save credentials to token file for future use
+            if not os.path.exists(token_path):
+                os.makedirs(os.path.dirname(token_path), exist_ok=True)
+                with open(token_path, 'w') as token:
+                    token.write(creds.to_json())
+                logger.info("Saved credentials to token file")
+                
         except Exception as e:
             logger.error(f"Failed to build Gmail service: {e}")
             self.service = None
+    
+    def _print_oauth_instructions(self) -> None:
+        """Print instructions for setting up OAuth credentials."""
+        print("\n" + "="*60)
+        print("🔐 GMAIL API SETUP INSTRUCTIONS")
+        print("="*60)
+        print("To use Gmail integration, you need to set up OAuth2 credentials:")
+        print()
+        print("1. Go to Google Cloud Console: https://console.cloud.google.com/")
+        print("2. Create a new project or select existing one")
+        print("3. Enable Gmail API:")
+        print("   - Go to 'APIs & Services' > 'Library'")
+        print("   - Search for 'Gmail API' and enable it")
+        print("4. Create OAuth2 credentials:")
+        print("   - Go to 'APIs & Services' > 'Credentials'")
+        print("   - Click 'Create Credentials' > 'OAuth 2.0 Client IDs'")
+        print("   - Choose 'Desktop application'")
+        print("   - Download the JSON file")
+        print("5. Extract credentials from the JSON file:")
+        print("   - client_id: from 'client_id' field")
+        print("   - client_secret: from 'client_secret' field")
+        print()
+        print("6. Set up your .env file:")
+        print("   GMAIL_CLIENT_ID=your_client_id_here")
+        print("   GMAIL_CLIENT_SECRET=your_client_secret_here")
+        print()
+        print("7. Run the authentication flow:")
+        print("   python -c \"from jd_agent.components.email_collector import EmailCollector; EmailCollector()\"")
+        print()
+        print("This will open a browser window for authentication.")
+        print("After authentication, the refresh token will be saved automatically.")
+        print("="*60)
+        print()
+    
+    def _get_oauth_credentials(self) -> Optional[Credentials]:
+        """Get OAuth credentials through interactive flow."""
+        try:
+            # Check if credentials file exists
+            creds_path = os.path.join(os.path.dirname(__file__), '..', '..', 'credentials.json')
+            
+            if not os.path.exists(creds_path):
+                print(f"\n❌ Credentials file not found at: {creds_path}")
+                print("Please download the OAuth2 credentials JSON file from Google Cloud Console")
+                print("and save it as 'credentials.json' in the project root directory.")
+                return None
+            
+            # Load credentials from file
+            with open(creds_path, 'r') as f:
+                creds_data = json.load(f)
+            
+            # Create flow
+            flow = InstalledAppFlow.from_client_config(
+                creds_data, 
+                self.SCOPES,
+                redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+            )
+            
+            # Run the flow
+            print("\n🔐 Opening browser for Gmail authentication...")
+            print("Please complete the authentication in your browser.")
+            print("If the browser doesn't open automatically, copy and paste the URL.")
+            
+            creds = flow.run_local_server(port=0)
+            return creds
+            
+        except Exception as e:
+            logger.error(f"Failed to get OAuth credentials: {e}")
+            return None
     
     def fetch_jd_emails(self, days_back: int = 30) -> List[Dict[str, Any]]:
         """
