@@ -3,7 +3,7 @@ Configuration management for JD Agent.
 """
 
 import os
-from typing import Optional, List
+from typing import Any, Optional, List
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 
@@ -12,155 +12,132 @@ load_dotenv()
 
 
 class Config(BaseModel):
-    """Configuration class for JD Agent application with Pydantic validation."""
+    """Configuration class for JD Agent application."""
     
-    # Gmail API Configuration
-    GMAIL_CLIENT_ID: str = Field(default="", description="Gmail API Client ID")
-    GMAIL_CLIENT_SECRET: str = Field(default="", description="Gmail API Client Secret")
-    GMAIL_REFRESH_TOKEN: str = Field(default="", description="Gmail API Refresh Token")
+    # API Keys
+    OPENAI_API_KEY: str = Field(default="", description="OpenAI API key")
+    SERPAPI_KEY: str = Field(default="", description="SerpAPI key")
+    GMAIL_REFRESH_TOKEN: str = Field(default="", description="Gmail refresh token")
     
-    # Search API Configuration
-    SERPAPI_KEY: str = Field(default="", description="SerpAPI Key")
-    GOOGLE_CSE_ID: str = Field(default="", description="Google Custom Search Engine ID")
-    GOOGLE_API_KEY: str = Field(default="", description="Google API Key")
+    # Database
+    DATABASE_PATH: str = Field(default="./data/jd_agent.db", description="SQLite database path")
     
-    # OpenAI Configuration
-    OPENAI_API_KEY: str = Field(default="", description="OpenAI API Key")
-    OPENAI_MODEL: str = Field(default="gpt-4o", description="OpenAI Model to use")
+    # Export settings
+    EXPORT_DIR: str = Field(default="./exports", description="Export directory")
     
-    # Database Configuration
-    DATABASE_PATH: str = Field(default="./data/jd_agent.db", description="Database file path")
-    
-    # Application Configuration
-    LOG_LEVEL: str = Field(default="INFO", description="Logging level")
-    MAX_SEARCH_RESULTS: int = Field(default=20, ge=1, le=100, description="Maximum search results")
-    MAX_TOKENS: int = Field(default=4000, ge=1, le=32000, description="Maximum tokens for API calls")
-    TEMPERATURE: float = Field(default=0.7, ge=0.0, le=2.0, description="Temperature for AI responses")
-    
-    # Email search configuration
-    EMAIL_SEARCH_QUERY: str = Field(
-        default='label:"inbox" AND ("has:attachment" OR "Job Description")',
-        description="Gmail search query for job descriptions"
+    # Search sources (from constants)
+    SEARCH_SOURCES: dict[str, list[str]] = Field(
+        default={
+            "leetcode": ["leetcode.com"],
+            "hackerrank": ["hackerrank.com"],
+            "geeksforgeeks": ["geeksforgeeks.org"],
+            "medium": ["medium.com"],
+            "github": ["github.com"],
+            "reddit": ["reddit.com"],
+            "stackoverflow": ["stackoverflow.com"],
+            "kaggle": ["kaggle.com"],
+            "stratascratch": ["stratascratch.com"],
+            "w3schools": ["w3schools.com"]
+        },
+        description="Search sources for knowledge mining"
     )
     
-    # Search sources configuration - must not be empty
-    SEARCH_SOURCES: List[str] = Field(
+    # Direct sources (from constants)
+    ALLOWED_DIRECT_SOURCES: dict[str, list[str]] = Field(
+        default={
+            "leetcode": [
+                "https://leetcode.com/problems/",
+                "https://leetcode.com/discuss/"
+            ],
+            "hackerrank": [
+                "https://www.hackerrank.com/challenges/",
+                "https://www.hackerrank.com/domains/"
+            ],
+            "geeksforgeeks": [
+                "https://www.geeksforgeeks.org/",
+                "https://www.geeksforgeeks.org/tag/interview-questions/"
+            ],
+            "medium": [
+                "https://medium.com/tag/interview-questions",
+                "https://medium.com/tag/technical-interview"
+            ],
+            "github": [
+                "https://github.com/topics/interview-questions",
+                "https://github.com/topics/technical-interview"
+            ]
+        },
+        description="Direct sources for knowledge mining"
+    )
+    
+    # Interview keywords (from constants)
+    INTERVIEW_KEYWORDS: list[str] = Field(
         default=[
-            "Glassdoor",
-            "LeetCode", 
-            "GitHub",
-            "Stack Overflow",
-            "InterviewBit",
-            "HackerRank"
+            "interview", "question", "technical", "coding", "algorithm",
+            "data structure", "system design", "behavioral", "whiteboard",
+            "leetcode", "hackerrank", "geeksforgeeks", "practice", "problem"
         ],
-        description="List of search sources for job information"
+        description="Keywords related to interview questions"
+    )
+    
+    # Credible sources (from constants)
+    CREDIBLE_SOURCES: list[str] = Field(
+        default=[
+            "leetcode.com", "hackerrank.com", "geeksforgeeks.org",
+            "medium.com", "github.com", "stackoverflow.com", "kaggle.com"
+        ],
+        description="Credible sources for interview content"
     )
     
     @field_validator('SEARCH_SOURCES')
     @classmethod
-    def validate_search_sources_not_empty(cls, v):
-        """Ensure search sources list is not empty."""
+    def validate_search_sources_not_empty(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
+        """Validate that search sources are not empty."""
         if not v:
-            raise ValueError('SEARCH_SOURCES list cannot be empty')
+            raise ValueError("SEARCH_SOURCES cannot be empty")
         return v
     
     @field_validator('SERPAPI_KEY')
     @classmethod
-    def validate_serpapi_key(cls, v):
-        """Validate SerpAPI key format if provided."""
-        if v and len(v) < 10:  # Basic length check
-            raise ValueError('SERPAPI_KEY should be at least 10 characters long')
+    def validate_serpapi_key(cls, v: str) -> str:
+        """Validate SerpAPI key format."""
+        if v and len(v) < 10:
+            raise ValueError("SERPAPI_KEY must be at least 10 characters long")
         return v
     
     @field_validator('OPENAI_API_KEY')
     @classmethod
-    def validate_openai_key(cls, v):
-        """Validate OpenAI API key format if provided."""
-        if v and len(v) < 10:  # Basic length check
-            raise ValueError('OPENAI_API_KEY should be at least 10 characters long')
+    def validate_openai_key(cls, v: str) -> str:
+        """Validate OpenAI API key format."""
+        if v and len(v) < 10:
+            raise ValueError("OPENAI_API_KEY must be at least 10 characters long")
         return v
     
-    @classmethod
-    def from_env(cls) -> 'Config':
-        """
-        Create Config instance from environment variables.
-        
-        Returns:
-            Config: Configuration instance
-        """
-        return cls(
-            GMAIL_CLIENT_ID=os.getenv("GMAIL_CLIENT_ID", ""),
-            GMAIL_CLIENT_SECRET=os.getenv("GMAIL_CLIENT_SECRET", ""),
-            GMAIL_REFRESH_TOKEN=os.getenv("GMAIL_REFRESH_TOKEN", ""),
-            SERPAPI_KEY=os.getenv("SERPAPI_KEY", ""),
-            GOOGLE_CSE_ID=os.getenv("GOOGLE_CSE_ID", ""),
-            GOOGLE_API_KEY=os.getenv("GOOGLE_API_KEY", ""),
-            OPENAI_API_KEY=os.getenv("OPENAI_API_KEY", ""),
-            OPENAI_MODEL=os.getenv("OPENAI_MODEL", "gpt-4o"),
-            DATABASE_PATH=os.getenv("DATABASE_PATH", "./data/jd_agent.db"),
-            LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
-            MAX_SEARCH_RESULTS=int(os.getenv("MAX_SEARCH_RESULTS", "20")),
-            MAX_TOKENS=int(os.getenv("MAX_TOKENS", "4000")),
-            TEMPERATURE=float(os.getenv("TEMPERATURE", "0.7")),
-            EMAIL_SEARCH_QUERY=os.getenv(
-                "EMAIL_SEARCH_QUERY", 
-                'label:"inbox" AND ("has:attachment" OR "Job Description")'
-            ),
-            SEARCH_SOURCES=[
-                "Glassdoor",
-                "LeetCode", 
-                "GitHub",
-                "Stack Overflow",
-                "InterviewBit",
-                "HackerRank"
-            ]
-        )
-    
-    def validate_required(self) -> bool:
-        """
-        Validate that required configuration is present.
-        
-        Returns:
-            bool: True if configuration is valid, False otherwise
-        """
-        required_fields = [
-            "GMAIL_CLIENT_ID",
-            "GMAIL_CLIENT_SECRET", 
-            "GMAIL_REFRESH_TOKEN",
-            "SERPAPI_KEY",
-            "OPENAI_API_KEY"
-        ]
-        
-        missing_fields = []
-        for field in required_fields:
-            if not getattr(self, field):
-                missing_fields.append(field)
-        
-        if missing_fields:
-            print(f"Missing required configuration: {', '.join(missing_fields)}")
-            print("Please check your .env file and ensure all required fields are set.")
-            return False
-        
-        return True
+    def validate_required(self) -> None:
+        """Validate that required fields are set."""
+        if not self.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY is required")
+        if not self.SERPAPI_KEY:
+            raise ValueError("SERPAPI_KEY is required")
     
     def get_database_url(self) -> str:
-        """
-        Get the database URL for SQLite.
-        
-        Returns:
-            str: Database URL
-        """
+        """Get database URL."""
         return f"sqlite:///{self.DATABASE_PATH}"
     
     def get_export_dir(self) -> str:
-        """
-        Get the export directory path.
-        
-        Returns:
-            str: Export directory path
-        """
-        return "./data/exports"
+        """Get export directory path."""
+        return self.EXPORT_DIR
+    
+    @classmethod
+    def from_env(cls) -> "Config":
+        """Create Config instance from environment variables."""
+        return cls(
+            OPENAI_API_KEY=os.getenv("OPENAI_API_KEY", ""),
+            SERPAPI_KEY=os.getenv("SERPAPI_KEY", ""),
+            GMAIL_REFRESH_TOKEN=os.getenv("GMAIL_REFRESH_TOKEN", ""),
+            DATABASE_PATH=os.getenv("DATABASE_PATH", "./data/jd_agent.db"),
+            EXPORT_DIR=os.getenv("EXPORT_DIR", "./exports")
+        )
 
 
-# Create a global config instance for backward compatibility
+# Global config instance for backward compatibility
 config = Config.from_env() 

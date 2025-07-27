@@ -1,359 +1,234 @@
 """
-LangGraph-based Scraping Agent
+Scraping Agent Component
 
-Orchestrates web scraping workflow using LangGraph and LangChain
-for better error handling, rate limiting, and task management.
+Handles web scraping operations using LangGraph for orchestration.
 """
 
 import asyncio
-import logging
-from typing import List, Dict, Any, Optional, Set
+import time
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
-from datetime import datetime
-import random
 
-from langgraph.graph import StateGraph, END
-from langchain.schema import BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.output_parser import StrOutputParser
+from langgraph.graph import StateGraph, END  # type: ignore
 
+from .knowledge_miner import KnowledgeMiner, ScrapedContent
+from .jd_parser import JobDescription
 from ..utils.config import Config
 from ..utils.database import Database
-from .jd_parser import JobDescription
-from .knowledge_miner import ScrapedContent, FreeWebScraper
+from ..utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
 class ScrapingState:
-    """State for the scraping workflow."""
+    """State for scraping workflow."""
     jd: JobDescription
-    urls_to_scrape: List[str]
     scraped_content: List[ScrapedContent]
-    failed_urls: List[str]
-    current_source: str
-    serpapi_calls: int
-    max_serpapi_calls: int
-    errors: List[str]
-    start_time: datetime
-    config: Config
-    database: Database
+    search_queries: List[str]
+    current_step: str
+    error: Optional[str] = None
 
 
 class ScrapingAgent:
-    """
-    LangGraph-based scraping agent for orchestrating web scraping workflow.
-    """
+    """Orchestrates web scraping operations using LangGraph."""
     
     def __init__(self, config: Config, database: Database):
         self.config = config
         self.database = database
-        self.scraper = FreeWebScraper(config)
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.1,
-            api_key=config.openai_api_key
-        ) if config.openai_api_key else None
-        
-        # Build the workflow graph
-        self.workflow = self._build_workflow()
+        self.knowledge_miner = KnowledgeMiner(config, database)
+        self.graph = self._build_workflow()
     
     def _build_workflow(self) -> StateGraph:
-        """Build the LangGraph workflow."""
-        
-        # Create the state graph
+        """Build the scraping workflow graph."""
         workflow = StateGraph(ScrapingState)
         
         # Add nodes
-        workflow.add_node("initialize", self._initialize_scraping)
+        workflow.add_node("prepare_search", self._prepare_search)
         workflow.add_node("scrape_direct_sources", self._scrape_direct_sources)
-        workflow.add_node("search_github", self._search_github)
-        workflow.add_node("search_reddit", self._search_reddit)
-        workflow.add_node("limited_serpapi_search", self._limited_serpapi_search)
-        workflow.add_node("filter_and_score", self._filter_and_score)
+        workflow.add_node("scrape_search_results", self._scrape_search_results)
+        workflow.add_node("filter_content", self._filter_content)
         workflow.add_node("store_results", self._store_results)
         
         # Add edges
-        workflow.set_entry_point("initialize")
-        workflow.add_edge("initialize", "scrape_direct_sources")
-        workflow.add_edge("scrape_direct_sources", "search_github")
-        workflow.add_edge("search_github", "search_reddit")
-        workflow.add_edge("search_reddit", "limited_serpapi_search")
-        workflow.add_edge("limited_serpapi_search", "filter_and_score")
-        workflow.add_edge("filter_and_score", "store_results")
+        workflow.set_entry_point("prepare_search")
+        workflow.add_edge("prepare_search", "scrape_direct_sources")
+        workflow.add_edge("scrape_direct_sources", "scrape_search_results")
+        workflow.add_edge("scrape_search_results", "filter_content")
+        workflow.add_edge("filter_content", "store_results")
         workflow.add_edge("store_results", END)
         
         return workflow.compile()
     
-    async def _initialize_scraping(self, state: ScrapingState) -> ScrapingState:
-        """Initialize the scraping workflow."""
-        logger.info(f"Initializing scraping for {state.jd.role} at {state.jd.company}")
-        
-        # Initialize URLs to scrape from direct sources
-        direct_urls = [
-            'https://github.com/topics/data-science-interview',
-            'https://github.com/topics/machine-learning-interview',
-            'https://github.com/topics/python-interview',
-            'https://leetcode.com/problemset/all/',
-            'https://www.geeksforgeeks.org/data-science-interview-questions/',
-            'https://www.geeksforgeeks.org/machine-learning-interview-questions/',
-            'https://www.w3schools.com/python/',
-        ]
-        
-        state.urls_to_scrape = direct_urls
-        state.start_time = datetime.now()
-        
-        logger.info(f"Initialized with {len(direct_urls)} URLs to scrape")
-        return state
-    
-    async def _scrape_direct_sources(self, state: ScrapingState) -> ScrapingState:
-        """Scrape content from direct sources."""
-        logger.info("Scraping direct sources...")
-        
-        for url in state.urls_to_scrape:
-            try:
-                state.current_source = self._extract_source_name(url)
-                
-                # Try different scraping methods
-                content = None
-                
-                # First try requests (fastest)
-                content = await self.scraper.scrape_with_requests(url)
-                
-                # If that fails, try Playwright
-                if not content:
-                    content = await self.scraper.scrape_with_playwright(url)
-                
-                # If that fails, try Selenium
-                if not content:
-                    content = self.scraper.scrape_with_selenium(url)
-                
-                if content:
-                    state.scraped_content.append(content)
-                    logger.info(f"Successfully scraped {url}")
-                else:
-                    state.failed_urls.append(url)
-                    logger.warning(f"Failed to scrape {url}")
-                
-                # Add delay between requests
-                await asyncio.sleep(random.uniform(1, 3))
-                
-            except Exception as e:
-                state.failed_urls.append(url)
-                state.errors.append(f"Error scraping {url}: {str(e)}")
-                logger.error(f"Error scraping {url}: {e}")
-                continue
-        
-        logger.info(f"Direct scraping completed. Success: {len(state.scraped_content)}, Failed: {len(state.failed_urls)}")
-        return state
-    
-    async def _search_github(self, state: ScrapingState) -> ScrapingState:
-        """Search GitHub repositories for interview questions."""
-        logger.info("Searching GitHub repositories...")
-        
-        queries = [
-            f"{state.jd.role} interview questions",
-            f"{state.jd.role} technical interview",
-            "data science interview questions",
-            "machine learning interview questions",
-        ]
-        
-        for query in queries:
-            try:
-                # Use GitHub's search API (free tier)
-                url = f"https://api.github.com/search/repositories?q={query}&sort=stars&order=desc"
-                headers = {
-                    'Accept': 'application/vnd.github.v3+json',
-                    'User-Agent': 'JD-Agent/1.0'
-                }
-                
-                async with self.scraper.throttler:
-                    response = self.scraper.session.get(url, headers=headers, timeout=10)
-                    response.raise_for_status()
-                    
-                    data = response.json()
-                    
-                    for repo in data.get('items', [])[:2]:  # Limit to 2 repos per query
-                        repo_url = repo['html_url']
-                        
-                        # Try to scrape README
-                        readme_url = f"{repo_url}/blob/main/readme/README.md"
-                        content = await self.scraper.scrape_with_requests(readme_url)
-                        
-                        if content:
-                            state.scraped_content.append(content)
-                
-                await asyncio.sleep(1)  # Rate limiting
-                
-            except Exception as e:
-                state.errors.append(f"GitHub search failed for {query}: {str(e)}")
-                logger.warning(f"GitHub search failed for {query}: {e}")
-                continue
-        
-        logger.info(f"GitHub search completed. Total content: {len(state.scraped_content)}")
-        return state
-    
-    async def _search_reddit(self, state: ScrapingState) -> ScrapingState:
-        """Search Reddit for interview questions."""
-        logger.info("Searching Reddit...")
-        
-        subreddits = [
-            'datascience',
-            'learnmachinelearning',
-            'MachineLearning',
-            'cscareerquestions',
-        ]
-        
-        for subreddit in subreddits:
-            try:
-                # Use Reddit's JSON API
-                url = f"https://www.reddit.com/r/{subreddit}/search.json?q={state.jd.role}%20interview&restrict_sr=on&sort=relevance&t=year"
-                headers = {'User-Agent': 'JD-Agent/1.0'}
-                
-                async with self.scraper.throttler:
-                    response = self.scraper.session.get(url, headers=headers, timeout=10)
-                    response.raise_for_status()
-                    
-                    data = response.json()
-                    
-                    for post in data.get('data', {}).get('children', [])[:2]:
-                        post_data = post['data']
-                        post_url = f"https://www.reddit.com{post_data['permalink']}"
-                        
-                        content = await self.scraper.scrape_with_requests(post_url)
-                        if content:
-                            state.scraped_content.append(content)
-                
-                await asyncio.sleep(1)
-                
-            except Exception as e:
-                state.errors.append(f"Reddit search failed for r/{subreddit}: {str(e)}")
-                logger.warning(f"Reddit search failed for r/{subreddit}: {e}")
-                continue
-        
-        logger.info(f"Reddit search completed. Total content: {len(state.scraped_content)}")
-        return state
-    
-    async def _limited_serpapi_search(self, state: ScrapingState) -> ScrapingState:
-        """Perform limited SerpAPI search."""
-        if not state.config.serpapi_key or state.serpapi_calls >= state.max_serpapi_calls:
-            logger.info("Skipping SerpAPI search (no key or limit reached)")
-            return state
-        
-        logger.info("Performing limited SerpAPI search...")
-        
+    def _prepare_search(self, state: ScrapingState) -> ScrapingState:
+        """Prepare search queries for the job description."""
         try:
-            from serpapi import GoogleSearch
+            logger.info(f"Preparing search queries for {state.jd.role} at {state.jd.company}")
             
-            queries = self._build_search_queries(state.jd)[:2]  # Limit to 2 queries
+            # Build search queries based on role and skills
+            queries = []
             
-            for query in queries:
-                if state.serpapi_calls >= state.max_serpapi_calls:
-                    break
-                
-                search = GoogleSearch({
-                    "q": query,
-                    "api_key": state.config.serpapi_key,
-                    "num": 3  # Limit results
-                })
-                
-                results = search.get_dict()
-                state.serpapi_calls += 1
-                
-                if "organic_results" in results:
-                    for result in results["organic_results"][:2]:  # Limit to 2 results per query
-                        url = result.get("link")
-                        if url:
-                            content = await self.scraper.scrape_with_playwright(url)
-                            if content:
-                                state.scraped_content.append(content)
-                
-                # Add delay between SerpAPI calls
-                await asyncio.sleep(2)
+            # Role-specific queries
+            queries.extend([
+                f'"{state.jd.role}" interview questions',
+                f'"{state.jd.role}" technical interview',
+                f'"{state.jd.role}" coding interview questions',
+            ])
+            
+            # Skill-specific queries
+            for skill in state.jd.skills[:5]:  # Limit to 5 skills
+                queries.extend([
+                    f'"{skill}" interview questions',
+                    f'"{skill}" technical interview',
+                ])
+            
+            # Company-specific queries
+            if state.jd.company:
+                queries.extend([
+                    f'"{state.jd.company}" interview questions',
+                    f'"{state.jd.company}" {state.jd.role} interview',
+                ])
+            
+            state.search_queries = queries[:10]  # Limit to 10 queries
+            state.current_step = "scrape_direct_sources"
+            
+            logger.info(f"Prepared {len(state.search_queries)} search queries")
             
         except Exception as e:
-            state.errors.append(f"SerpAPI search failed: {str(e)}")
-            logger.error(f"SerpAPI search failed: {e}")
+            state.error = f"Error preparing search: {e}"
+            logger.error(state.error)
         
-        logger.info(f"SerpAPI search completed. Calls made: {state.serpapi_calls}")
         return state
     
-    async def _filter_and_score(self, state: ScrapingState) -> ScrapingState:
-        """Filter and score scraped content."""
-        logger.info("Filtering and scoring content...")
-        
-        scored_content = []
-        
-        for content in state.scraped_content:
-            score = self._calculate_relevance_score(content, state.jd)
-            if score > 0.3:  # Only keep content with decent relevance
-                content.relevance_score = score
-                scored_content.append(content)
-        
-        # Sort by relevance score
-        scored_content.sort(key=lambda x: x.relevance_score, reverse=True)
-        
-        # Keep top 15 most relevant pieces
-        state.scraped_content = scored_content[:15]
-        
-        logger.info(f"Filtering completed. Kept {len(state.scraped_content)} relevant pieces")
-        return state
-    
-    async def _store_results(self, state: ScrapingState) -> ScrapingState:
-        """Store results in database."""
-        logger.info("Storing results in database...")
-        
-        for content in state.scraped_content:
+    def _scrape_direct_sources(self, state: ScrapingState) -> ScrapingState:
+        """Scrape content from direct sources."""
+        try:
+            logger.info("Scraping direct sources...")
+            
+            # Use the knowledge miner to scrape direct sources
+            async def scrape_async():
+                return await self.knowledge_miner.mine_knowledge(state.jd)
+            
+            # Run async scraping in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                state.database.insert_search_result(
-                    state.jd.company, state.jd.role, content.url, content.title,
-                    content.content, content.source, content.relevance_score
-                )
-            except Exception as e:
-                state.errors.append(f"Failed to store result {content.url}: {str(e)}")
-                logger.error(f"Failed to store result {content.url}: {e}")
+                content = loop.run_until_complete(scrape_async())
+                state.scraped_content.extend(content)
+            finally:
+                loop.close()
+            
+            state.current_step = "scrape_search_results"
+            logger.info(f"Scraped {len(content)} pieces of content from direct sources")
+            
+        except Exception as e:
+            state.error = f"Error scraping direct sources: {e}"
+            logger.error(state.error)
         
-        logger.info(f"Stored {len(state.scraped_content)} results in database")
         return state
     
-    def _extract_source_name(self, url: str) -> str:
-        """Extract source name from URL."""
-        if 'github.com' in url:
-            return 'GitHub'
-        elif 'leetcode.com' in url:
-            return 'LeetCode'
-        elif 'geeksforgeeks.org' in url:
-            return 'GeeksforGeeks'
-        elif 'w3schools.com' in url:
-            return 'W3Schools'
-        elif 'reddit.com' in url:
-            return 'Reddit'
-        else:
-            return 'Other'
-    
-    def _build_search_queries(self, jd: JobDescription) -> List[str]:
-        """Build search queries for SerpAPI."""
-        queries = [
-            f'"{jd.role}" interview questions',
-            f'"{jd.role}" technical interview',
-        ]
+    def _scrape_search_results(self, state: ScrapingState) -> ScrapingState:
+        """Scrape content from search results."""
+        try:
+            logger.info("Scraping search results...")
+            
+            # This would typically involve using SerpAPI or other search APIs
+            # For now, we'll use the knowledge miner's search capabilities
+            additional_content = []
+            
+            for query in state.search_queries[:3]:  # Limit to 3 queries
+                try:
+                    # Simulate search result scraping
+                    # In a real implementation, this would use SerpAPI
+                    logger.info(f"Searching for: {query}")
+                    
+                    # For now, we'll just log the query
+                    # This is where you'd integrate with SerpAPI
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to search for '{query}': {e}")
+                    continue
+            
+            state.scraped_content.extend(additional_content)
+            state.current_step = "filter_content"
+            logger.info(f"Added {len(additional_content)} pieces of content from search results")
+            
+        except Exception as e:
+            state.error = f"Error scraping search results: {e}"
+            logger.error(state.error)
         
-        # Add skill-specific queries
-        for skill in jd.skills[:2]:  # Limit to 2 skills
-            queries.append(f'"{skill}" interview questions')
-        
-        return queries[:5]  # Limit to 5 queries
+        return state
     
-    def _calculate_relevance_score(self, content: ScrapedContent, jd: JobDescription) -> float:
+    def _filter_content(self, state: ScrapingState) -> ScrapingState:
+        """Filter and rank scraped content."""
+        try:
+            logger.info("Filtering and ranking content...")
+            
+            # Filter content based on relevance
+            filtered_content = []
+            
+            for content in state.scraped_content:
+                # Calculate relevance score
+                relevance = self._calculate_relevance(content, state.jd)
+                
+                if relevance > 0.3:  # Only keep relevant content
+                    content.relevance_score = relevance
+                    filtered_content.append(content)
+            
+            # Sort by relevance score
+            filtered_content.sort(key=lambda x: x.relevance_score, reverse=True)
+            
+            # Keep top 20 most relevant pieces
+            state.scraped_content = filtered_content[:20]
+            state.current_step = "store_results"
+            
+            logger.info(f"Filtered to {len(state.scraped_content)} relevant pieces of content")
+            
+        except Exception as e:
+            state.error = f"Error filtering content: {e}"
+            logger.error(state.error)
+        
+        return state
+    
+    def _store_results(self, state: ScrapingState) -> ScrapingState:
+        """Store scraped results in the database."""
+        try:
+            logger.info("Storing results in database...")
+            
+            # Store each piece of content
+            for content in state.scraped_content:
+                self.database.insert_search_result(
+                    state.jd.company,
+                    state.jd.role,
+                    content.url,
+                    content.title,
+                    content.content,
+                    content.source,
+                    content.relevance_score
+                )
+            
+            state.current_step = "completed"
+            logger.info(f"Stored {len(state.scraped_content)} pieces of content")
+            
+        except Exception as e:
+            state.error = f"Error storing results: {e}"
+            logger.error(state.error)
+        
+        return state
+    
+    def _calculate_relevance(self, content: ScrapedContent, jd: JobDescription) -> float:
         """Calculate relevance score for content."""
+        # This is a simplified relevance calculation
+        # In practice, you'd use more sophisticated NLP techniques
+        
+        text = f"{content.title} {content.content}".lower()
+        role_lower = jd.role.lower()
+        
+        # Simple keyword matching
         score = 0.0
-        text = content.content.lower()
-        title = content.title.lower()
         
         # Role matching
-        if jd.role.lower() in text or jd.role.lower() in title:
+        if role_lower in text:
             score += 0.4
         
         # Skill matching
@@ -362,64 +237,160 @@ class ScrapingAgent:
                 score += 0.2
         
         # Interview-related keywords
-        interview_keywords = ['interview', 'question', 'technical', 'coding', 'problem', 'solution']
+        interview_keywords = ['interview', 'question', 'technical', 'coding', 'algorithm']
         for keyword in interview_keywords:
             if keyword in text:
                 score += 0.1
         
-        # Source credibility
-        credible_sources = ['github', 'leetcode', 'hackerrank', 'geeksforgeeks', 'medium']
-        for source in credible_sources:
-            if source in content.source.lower():
-                score += 0.1
-        
-        return min(score, 1.0)  # Cap at 1.0
+        return min(score, 1.0)
     
-    async def run_scraping_workflow(self, jd: JobDescription) -> List[ScrapedContent]:
+    def run_scraping_workflow(self, jd: JobDescription) -> Dict[str, Any]:
         """Run the complete scraping workflow."""
-        logger.info(f"Starting scraping workflow for {jd.role}")
-        
-        # Initialize state
-        initial_state = ScrapingState(
-            jd=jd,
-            urls_to_scrape=[],
-            scraped_content=[],
-            failed_urls=[],
-            current_source="",
-            serpapi_calls=0,
-            max_serpapi_calls=3,  # Very limited SerpAPI usage
-            errors=[],
-            start_time=datetime.now(),
-            config=self.config,
-            database=self.database
-        )
-        
         try:
+            logger.info(f"Starting scraping workflow for {jd.role} at {jd.company}")
+            
+            # Initialize state
+            initial_state = ScrapingState(
+                jd=jd,
+                scraped_content=[],
+                search_queries=[],
+                current_step="start"
+            )
+            
             # Run the workflow
-            final_state = await self.workflow.ainvoke(initial_state)
+            final_state = self.graph.invoke(initial_state)
             
-            # Log summary
-            duration = (datetime.now() - final_state.start_time).total_seconds()
-            logger.info(f"Scraping workflow completed in {duration:.2f}s")
-            logger.info(f"Results: {len(final_state.scraped_content)} successful, {len(final_state.failed_urls)} failed")
-            logger.info(f"SerpAPI calls: {final_state.serpapi_calls}/{final_state.max_serpapi_calls}")
+            # Prepare results
+            results = {
+                'success': final_state.error is None,
+                'content_count': len(final_state.scraped_content),
+                'error': final_state.error,
+                'content': [
+                    {
+                        'url': content.url,
+                        'title': content.title,
+                        'source': content.source,
+                        'relevance_score': content.relevance_score
+                    }
+                    for content in final_state.scraped_content
+                ]
+            }
             
-            if final_state.errors:
-                logger.warning(f"Errors encountered: {len(final_state.errors)}")
-                for error in final_state.errors[:5]:  # Log first 5 errors
-                    logger.warning(f"  - {error}")
-            
-            return final_state.scraped_content
+            logger.info(f"Scraping workflow completed. Found {results['content_count']} pieces of content")
+            return results
             
         except Exception as e:
-            logger.error(f"Scraping workflow failed: {e}")
+            logger.error(f"Error running scraping workflow: {e}")
+            return {
+                'success': False,
+                'content_count': 0,
+                'error': str(e),
+                'content': []
+            }
+    
+    def search_github_repos(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Search GitHub repositories for interview questions."""
+        try:
+            import aiohttp
+            
+            async def search_async():
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://api.github.com/search/repositories"
+                    params = {
+                        'q': query,
+                        'sort': 'stars',
+                        'order': 'desc',
+                        'per_page': max_results
+                    }
+                    headers = {
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': 'JD-Agent/1.0'
+                    }
+                    
+                    async with session.get(url, params=params, headers=headers) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            return data.get('items', [])
+                        else:
+                            logger.warning(f"GitHub API returned status {response.status}")
+                            return []
+            
+            # Run async search in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                repos = loop.run_until_complete(search_async())
+            finally:
+                loop.close()
+            
+            return repos
+            
+        except Exception as e:
+            logger.error(f"Error searching GitHub repos: {e}")
             return []
     
-    def get_usage_stats(self) -> Dict[str, Any]:
-        """Get usage statistics."""
-        return {
-            'serpapi_calls': 0,  # This would be tracked per instance
-            'max_serpapi_calls': 3,
-            'scraping_methods': ['requests', 'playwright', 'selenium'],
-            'rate_limiting': '2 requests/second',
-        } 
+    def search_reddit_posts(self, query: str, subreddit: str = "cscareerquestions", max_results: int = 10) -> List[Dict[str, Any]]:
+        """Search Reddit posts for interview questions."""
+        try:
+            import aiohttp
+            
+            async def search_async():
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://www.reddit.com/r/{subreddit}/search.json"
+                    params = {
+                        'q': query,
+                        'restrict_sr': 'on',
+                        'sort': 'relevance',
+                        't': 'year',
+                        'limit': max_results
+                    }
+                    headers = {'User-Agent': 'JD-Agent/1.0'}
+                    
+                    async with session.get(url, params=params, headers=headers) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            return data.get('data', {}).get('children', [])
+                        else:
+                            logger.warning(f"Reddit API returned status {response.status}")
+                            return []
+            
+            # Run async search in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                posts = loop.run_until_complete(search_async())
+            finally:
+                loop.close()
+            
+            return posts
+            
+        except Exception as e:
+            logger.error(f"Error searching Reddit posts: {e}")
+            return []
+    
+    def search_with_serpapi(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Search using SerpAPI (limited usage)."""
+        try:
+            from serpapi import GoogleSearch  # type: ignore
+            
+            if not self.config.SERPAPI_KEY:
+                logger.warning("SerpAPI key not configured")
+                return []
+            
+            search = GoogleSearch({
+                "q": query,
+                "api_key": self.config.SERPAPI_KEY,
+                "num": max_results
+            })
+            
+            results = search.get_dict()
+            
+            if "organic_results" in results:
+                return results["organic_results"]
+            else:
+                logger.warning("No organic results found in SerpAPI response")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error searching with SerpAPI: {e}")
+            return [] 

@@ -1,0 +1,62 @@
+name: Type Check with MyPy
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ main, master ]
+
+jobs:
+  type-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install mypy types-beautifulsoup4 types-requests types-python-dateutil types-setuptools types-PyYAML types-mock types-pytz types-toml
+    
+    - name: Run MyPy
+      run: |
+        mypy --strict jd_agent/
+        mypy --strict test/
+        mypy --strict setup/
+    
+    - name: Check for new type errors
+      run: |
+        # Create a baseline of current type errors
+        mypy --strict jd_agent/ > current_errors.txt 2>&1 || true
+        mypy --strict test/ >> current_errors.txt 2>&1 || true
+        mypy --strict setup/ >> current_errors.txt 2>&1 || true
+        
+        # Count the number of errors
+        error_count=$(grep -c "error:" current_errors.txt || echo "0")
+        
+        echo "Found $error_count type errors"
+        
+        # If there are too many errors, fail the check
+        if [ "$error_count" -gt 50 ]; then
+          echo "Too many type errors found. Please fix the type issues before merging."
+          echo "Current errors:"
+          cat current_errors.txt
+          exit 1
+        fi
+        
+        echo "Type check passed with $error_count errors (acceptable threshold)" 
