@@ -1,31 +1,40 @@
 # Core dependencies
-pydantic>=2.0.0
-python-dotenv>=1.0.0
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
-
-# Gmail API
+openai>=1.0.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.1.0
 google-api-python-client>=2.0.0
-
-# Search and AI
-google-search-results>=2.4.0
-openai>=1.0.0
-
-# NLP and text processing
 spacy>=3.7.0
-rapidfuzz~=3.0
+serpapi>=0.1.0
+pydantic>=2.0.0
+structlog>=23.0.0
+rapidfuzz>=3.0.0
+sentence-transformers>=2.5.0
 
-# Web scraping
+# Web scraping and async
 aiohttp>=3.8.0
-asyncio-throttle>=1.0.0
 playwright>=1.40.0
+asyncio-throttle>=1.0.0
+aiofiles>=23.0.0
+
+# Data processing and export
+pandas>=2.3.0
+openpyxl>=3.1.0
+
+# CLI and utilities
+typer>=0.16.0
+click>=8.0.0
+
+# Type checking and development
+mypy>=1.0.0
+types-aiofiles>=24.0.0
+pandas-stubs>=2.3.0
+types-openpyxl>=3.1.0
 
 # Testing
-pytest>=7.4.0
-pytest-asyncio==1.1.0
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
 
-# Utilities
-langgraph>=0.1.0 
+# Code quality
+black>=23.0.0
+flake8>=6.0.0 

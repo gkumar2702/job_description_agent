@@ -1,109 +1,194 @@
-# JD Agent - Interview Question Harvester
+# Job Description Agent - Complete Documentation
 
-An intelligent system that automatically harvests interview questions tailored to candidates from job description emails.
+This document provides comprehensive information about the Job Description Agent (JD Agent), a sophisticated AI-powered system for automatically collecting, parsing, and generating interview questions from job descriptions.
+
+## 🚀 Overview
+
+The JD Agent is a production-ready system that combines Gmail integration, advanced NLP, machine learning, and AI to create a complete pipeline for interview question generation. It features:
+
+- **Automated Email Collection**: Gmail API integration with OAuth 2.0
+- **Advanced NLP Parsing**: spaCy-based entity recognition and skill extraction
+- **AI-Powered Question Generation**: OpenAI GPT-4o with function calling
+- **Knowledge Mining**: Web scraping and research integration
+- **Smart Question Management**: Deduplication, scoring, and organization
+- **Multiple Export Formats**: Markdown, CSV, JSON, and Excel
+- **CLI Interface**: Command-line tools for analysts
+- **Type Safety**: Comprehensive type checking with mypy
+- **Performance Optimization**: Async operations and caching
+
+## 📋 Table of Contents
+
+1. [Core Features](#core-features)
+2. [New Features (v2.0)](#new-features-v20)
+3. [Architecture](#architecture)
+4. [Installation & Setup](#installation--setup)
+5. [Usage Examples](#usage-examples)
+6. [CLI Tools](#cli-tools)
+7. [Configuration](#configuration)
+8. [Performance & Monitoring](#performance--monitoring)
+9. [Development](#development)
+10. [Troubleshooting](#troubleshooting)
+
+## 🎯 Core Features
+
+### Email Collection
+- **Gmail API Integration**: OAuth 2.0 authentication
+- **Thread-based Collection**: Groups related emails
+- **Attachment Handling**: PDF, DOC, TXT parsing
+- **Rate Limiting**: Respectful API usage
+- **Error Recovery**: Robust error handling
+
+### Job Description Parsing
+- **Entity Recognition**: Company, role, location extraction
+- **Skill Identification**: Technology and skill detection
+- **Experience Level**: Years of experience parsing
+- **Confidence Scoring**: Quality assessment of extractions
+- **Metadata Tracking**: Parsing method documentation
+
+### Question Generation
+- **OpenAI GPT-4o**: State-of-the-art language model
+- **Function Calling**: Structured output generation
+- **Streaming Responses**: Real-time generation
+- **Context Integration**: Research-based enhancement
+- **Difficulty Levels**: Easy, medium, hard questions
+
+### Knowledge Mining
+- **Web Scraping**: Multiple strategies (aiohttp, Playwright)
+- **SerpAPI Integration**: Search result collection
+- **Relevance Scoring**: Content filtering
+- **Caching**: Performance optimization
+- **Rate Limiting**: Respectful web scraping
+
+## 🆕 New Features (v2.0)
+
+### Sentence Embeddings & Semantic Scoring
+- **MiniLM Model**: Fast, accurate sentence embeddings
+- **Cached Embeddings**: Performance optimization
+- **Cosine Similarity**: Semantic question relevance
+- **Hybrid Scoring**: Combine heuristic and embedding approaches
+
+### Strategy Pattern for Scoring
+```python
+# Traditional scoring
+scorer = HeuristicScorer()
+
+# Embedding-based scoring
+scorer = EmbeddingScorer(embedding_weight=0.7, heuristic_weight=0.3)
+
+# Hybrid scoring with custom weights
+scorer = HybridScorer(embedding_weight=0.6, heuristic_weight=0.4)
+```
+
+### Excel Export with Styling
+- **Styled Headers**: Blue background with white text
+- **Auto-filter**: Easy data exploration
+- **Metadata Sheet**: Job description details
+- **Proper Formatting**: Column widths and alignment
+
+### CLI Tools for Analysts
+```bash
+# Deduplicate questions
+python scripts/qb_cli.py dedup questions.json
+
+# Score questions by relevance
+python scripts/qb_cli.py score questions.json --jd job.json --scorer hybrid
+
+# Export in multiple formats
+python scripts/qb_cli.py export questions.json --formats md,csv,xlsx
+
+# Show statistics
+python scripts/qb_cli.py stats questions.json
+```
+
+### Type Safety & Quality
+- **mypy --strict**: Comprehensive type checking
+- **Type Stubs**: External library type information
+- **GitHub Actions**: Automated type checking
+- **Code Quality**: PEP 8 compliance
+
+### Structured Logging
+- **JSON Output**: Machine-readable logs
+- **Timer Decorators**: Performance tracking
+- **Event-based**: Structured event logging
+- **Monitoring Ready**: Integration with logging systems
 
 ## 🏗️ Architecture
 
+### Component Overview
+
 ```
-┌───────────────────┐      ┌─────────────────┐      ┌───────────────────┐
-│ EmailCollector    │ ───▶ │ JDParser        │ ───▶ │ KnowledgeMiner    │
-└───────────────────┘      └─────────────────┘      └───────────────────┘
-        │                         │                          │
-        ▼                         ▼                          ▼
-Gmail API search         spaCy / regex to          SerpAPI → scrape top
-label:"inbox" &&         extract role, skills,     20 results (Glassdoor,
-"has:attachment OR       yrs.-of-exp, company      LeetCode, GitHub, etc.)
-('Job Description')"     name, location            & store in SQLite db
-                                                      ▲
-                                                      │
-                                         ┌────────────┤
-                                         │            ▼
-                                   ┌───────────────┐   ┌─────────────────┐
-                                   │ PromptEngine  │   │ QuestionBank     │
-                                   └───────────────┘   └─────────────────┘
-                                   Uses retrieved       Deduplicates,
-                                   snippets + JD        scores, & exports
-                                   details to ask       markdown & CSV
-                                   GPT-4o for Q's       files
-                                   (SQL, Py, Stats,
-                                   ML) at three
-                                   difficulty levels
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Email         │    │   JD Parser     │    │   Knowledge     │
+│   Collector     │───▶│   (NLP)         │───▶│   Miner         │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Prompt        │    │   Question      │    │   Export        │
+│   Engine        │    │   Bank          │    │   System        │
+│   (OpenAI)      │    │   (Management)  │    │   (Formats)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-## 🚀 Features
+### Data Flow
 
-- **Email Collection**: Automatically fetches job description emails from Gmail
-- **JD Parsing**: Extracts role, skills, experience, company, and location using NLP
-- **Knowledge Mining**: Searches and scrapes relevant interview questions from multiple sources
-- **Question Generation**: Uses GPT-4o to generate tailored questions at three difficulty levels
-- **Export**: Outputs questions in Markdown and CSV formats
-- **Database Storage**: SQLite database for caching and deduplication
+1. **Email Collection**: Gmail API → Email threads
+2. **Parsing**: Email content → Job descriptions
+3. **Knowledge Mining**: Job descriptions → Research context
+4. **Question Generation**: Job + Context → Interview questions
+5. **Management**: Questions → Deduplication → Scoring
+6. **Export**: Scored questions → Multiple formats
 
-## 📋 Requirements
+### Scoring Strategies
 
-- Python 3.10+
-- Gmail API credentials
-- SerpAPI key (or Google Custom Search)
+#### HeuristicScorer
+- Skill matching (40% weight)
+- Role relevance (30% weight)
+- Company relevance (20% weight)
+- Experience level (10% weight)
+
+#### EmbeddingScorer
+- Semantic similarity using MiniLM
+- JD context vs question similarity
+- Cached embeddings for performance
+
+#### HybridScorer
+- Configurable combination of approaches
+- Customizable weights
+- Best of both worlds
+
+## 🛠️ Installation & Setup
+
+### Prerequisites
+- Python 3.12+
+- Gmail account with API access
 - OpenAI API key
+- SerpAPI key (for knowledge mining)
 
-## 🛠️ Installation
+### Quick Setup
 
-1. **Clone the repository**
+1. **Clone and setup**:
    ```bash
    git clone https://github.com/gkumar2702/job_description_agent.git
    cd job_description_agent
-   ```
-
-2. **Install dependencies**
-   ```bash
+   python -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
+   pip install -e .
    ```
 
-3. **Download spaCy model**
-   ```bash
-   python -m spacy download en_core_web_sm
-   ```
-
-4. **Set up environment variables**
+2. **Configure environment**:
    ```bash
    cp env.example .env
    # Edit .env with your API keys
    ```
 
-5. **Set up Gmail API** (if using Gmail)
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project
-   - Enable Gmail API
-   - Create OAuth 2.0 credentials
-   - Download credentials JSON file and save as `credentials.json`
-   - Run: `python setup/setup_gmail_auth.py`
-
-## 🔐 Gmail Authentication Setup
-
-If you want to use Gmail integration to automatically collect job description emails:
-
-1. **Download OAuth credentials**:
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project or select existing one
-   - Enable Gmail API
-   - Create OAuth 2.0 credentials (Desktop application)
-   - Download the JSON file
-
-2. **Set up authentication**:
+3. **Setup Gmail authentication**:
    ```bash
-   # Save the downloaded file as credentials.json in the project root
-   # Then run the setup script
-   python setup/setup_gmail_auth.py
+   python setup/gmail_auth_setup.py
    ```
 
-3. **Test the connection**:
-   ```bash
-   python setup/setup_gmail_auth.py --test
-   ```
-
-The script will handle the OAuth flow properly on macOS and save your credentials for future use.
-
-## 🎯 Usage
+## 📖 Usage Examples
 
 ### Basic Usage
 
@@ -113,229 +198,249 @@ from jd_agent.main import JDAgent
 # Initialize the agent
 agent = JDAgent()
 
-# Process job descriptions and generate questions
-agent.run()
+# Process job descriptions from Gmail
+results = agent.process_job_descriptions()
+
+# Generate interview questions
+questions = agent.generate_questions(results)
 ```
 
-### Advanced Usage
+### Advanced Usage with Custom Scoring
 
 ```python
-from jd_agent.components import EmailCollector, JDParser, KnowledgeMiner
+from jd_agent.components.question_bank import QuestionBank
+from jd_agent.components.scoring_strategies import HybridScorer
 
-# Collect emails
-collector = EmailCollector()
-emails = collector.fetch_jd_emails()
+# Initialize with custom scoring strategy
+scorer = HybridScorer(embedding_weight=0.7, heuristic_weight=0.3)
+qb = QuestionBank(config, scorer=scorer)
 
-# Parse job descriptions
-parser = JDParser()
-for email in emails:
-    jd_data = parser.parse(email.content)
-    
-    # Mine knowledge
-    miner = KnowledgeMiner()
-    questions = miner.generate_questions(jd_data)
-    
-    # Export results
-    miner.export_questions(questions, jd_data['company'])
+# Add and process questions
+qb.add_questions(questions)
+deduplicated = qb.deduplicate_questions()
+scored = qb.score_questions(jd)
+
+# Export in multiple formats
+export_files = await qb.export_questions_async(jd, scored, ['markdown', 'csv', 'xlsx'])
 ```
 
-## 📁 Project Structure
-
-```
-jd_agent/
-├── main.py                 # Main entry point
-├── requirements.txt        # Python dependencies
-├── env.example            # Environment variables template
-├── run_tests.py           # Test runner convenience script
-├── run_setup.py           # Setup runner convenience script
-├── readme/                # Documentation files
-│   ├── README.md          # This file
-│   ├── ENV_SETUP_GUIDE.md # Environment setup guide
-│   ├── GMAIL_AUTH_FIX.md  # Gmail authentication troubleshooting
-│   ├── PIPELINE_RESULTS_GUIDE.md # Pipeline results documentation
-│   └── ENHANCED_JDPARSER_SUMMARY.md # JDParser enhancements summary
-├── setup/                 # Setup and configuration scripts
-│   ├── __init__.py
-│   ├── setup_gmail_auth.py      # Gmail OAuth setup
-│   ├── check_gmail_status.py    # Gmail connection checker
-│   ├── fix_oauth_access.py      # OAuth access fixer
-│   └── setup_service_account.py # Service account setup
-├── test/                  # Test and check scripts
-│   ├── __init__.py
-│   ├── test_demo.py             # Basic functionality test
-│   ├── test_email_collector.py  # Email collector test
-│   ├── test_email_details.py    # Email analysis test
-│   ├── test_full_pipeline.py    # Full pipeline test
-│   ├── test_enhanced_email_collector.py # Enhanced email collector test
-│   ├── test_enhanced_jd_parser.py # Enhanced JDParser test
-│   ├── check_pipeline_results.py # Pipeline results checker
-│   └── run_pipeline_and_check_results.py # Pipeline runner and checker
-├── data/                  # Database and output files
-│   ├── jd_agent.db       # SQLite database
-│   └── exports/          # Generated questions
-├── jd_agent/             # Main package
-│   ├── __init__.py
-│   ├── components/       # Core components
-│   │   ├── __init__.py
-│   │   ├── email_collector.py
-│   │   ├── jd_parser.py
-│   │   ├── knowledge_miner.py
-│   │   ├── prompt_engine.py
-│   │   └── question_bank.py
-│   ├── utils/            # Utilities
-│   │   ├── __init__.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   └── logger.py
-│   └── tests/            # Unit tests
-│       ├── __init__.py
-│       ├── test_email_collector.py
-│       ├── test_jd_parser.py
-│       └── test_knowledge_miner.py
-```
-
-## 🧪 Testing
-
-### Unit Tests
-Run the unit test suite:
+### CLI Usage
 
 ```bash
-pytest jd_agent/tests/ -v
+# Process questions with hybrid scoring
+python scripts/qb_cli.py score questions.json --jd job.json \
+    --scorer hybrid --embedding-weight 0.7
+
+# Export in Excel format with styling
+python scripts/qb_cli.py export questions.json --jd job.json \
+    --formats xlsx --output-dir ./exports
 ```
 
-Run with coverage:
+## 🖥️ CLI Tools
+
+### Question Bank CLI (`scripts/qb_cli.py`)
+
+The CLI provides four main commands:
+
+#### 1. Deduplicate (`dedup`)
+```bash
+python scripts/qb_cli.py dedup questions.json [--output output.json]
+```
+- Removes duplicate questions using rapidfuzz
+- Configurable similarity threshold
+- Preserves question metadata
+
+#### 2. Score (`score`)
+```bash
+python scripts/qb_cli.py score questions.json --jd job.json \
+    [--scorer {heuristic,embedding,hybrid}] \
+    [--embedding-weight 0.6] \
+    [--heuristic-weight 0.4]
+```
+- Scores questions by relevance to job description
+- Multiple scoring strategies available
+- Configurable weights for hybrid scoring
+
+#### 3. Export (`export`)
+```bash
+python scripts/qb_cli.py export questions.json --jd job.json \
+    --formats md,csv,xlsx,json \
+    [--output-dir ./exports]
+```
+- Exports questions in multiple formats
+- Excel export includes styling and metadata
+- Configurable output directory
+
+#### 4. Statistics (`stats`)
+```bash
+python scripts/qb_cli.py stats questions.json
+```
+- Shows question statistics
+- Difficulty distribution
+- Category breakdown
+- Average relevance scores
+
+## ⚙️ Configuration
+
+### Environment Variables
 
 ```bash
-pytest jd_agent/tests/ --cov=jd_agent --cov-report=html
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4o
+TEMPERATURE=0.3
+TOP_P=0.9
+
+# Gmail Configuration
+GMAIL_CREDENTIALS_FILE=credentials.json
+GMAIL_TOKEN_FILE=token.json
+
+# SerpAPI Configuration
+SERPAPI_KEY=your_serpapi_key
+
+# Database Configuration
+DATABASE_URL=sqlite:///jd_agent.db
+
+# Export Configuration
+EXPORT_DIR=./exports
 ```
 
-### Functional Tests
-Run functional tests using the convenience script:
+### Constants Configuration
 
+```python
+# Scoring weights (in utils/constants.py)
+SIMILARITY_THRESHOLD = 85
+SKILL_WEIGHT = 0.4
+ROLE_WEIGHT = 0.3
+COMPANY_WEIGHT = 0.2
+DIFFICULTY_WEIGHT = 0.1
+```
+
+## 📈 Performance & Monitoring
+
+### Optimization Features
+- **Async Operations**: Non-blocking I/O
+- **Caching**: Embedding and web scraping cache
+- **Rate Limiting**: Respectful API usage
+- **Connection Pooling**: Efficient HTTP connections
+- **Context Compression**: Token-aware content management
+
+### Monitoring
+- **Structured Logging**: JSON logs for easy parsing
+- **Performance Metrics**: Timing data for optimization
+- **Error Tracking**: Comprehensive error logging
+- **Cache Statistics**: Hit/miss ratios
+
+### Log Format
+```json
+{
+  "event": "dedup_done",
+  "before": 123,
+  "after": 87,
+  "elapsed_ms": 45,
+  "timestamp": "2025-01-15T10:30:00Z"
+}
+```
+
+## 🔧 Development
+
+### Type Safety
 ```bash
-python run_tests.py
+# Run mypy type checking
+mypy --strict jd_agent/
+
+# Install type stubs
+pip install types-aiofiles pandas-stubs types-openpyxl
 ```
 
-Or run individual tests:
-
+### Testing
 ```bash
-# Test basic functionality
-python test/test_demo.py
+# Run all tests
+pytest
 
-# Test email collector
-python test/test_email_collector.py
-
-# Test enhanced email collector
-python test/test_enhanced_email_collector.py
-
-# Test enhanced JDParser
-python test/test_enhanced_jd_parser.py
-
-# Test full pipeline
-python test/test_full_pipeline.py
-
-# Test email analysis
-python test/test_email_details.py
-
-# Check pipeline results
-python test/check_pipeline_results.py
-
-# Run pipeline and check results
-python test/run_pipeline_and_check_results.py
+# Run specific test categories
+pytest test/test_new_features.py
+pytest test/test_embeddings_and_async_export.py
 ```
 
-### Setup and Configuration
-Run setup utilities using the convenience script:
-
+### Code Quality
 ```bash
-python run_setup.py
+# Format code
+black jd_agent/ test/ scripts/
+
+# Lint code
+flake8 jd_agent/ test/ scripts/
 ```
 
-Or run individual setup scripts:
+## 🐛 Troubleshooting
 
+### Common Issues
+
+#### Gmail Authentication
 ```bash
-# Gmail authentication setup
-python setup/setup_gmail_auth.py
-
-# Check Gmail status
-python setup/check_gmail_status.py
-
-# Fix OAuth access issues
-python setup/fix_oauth_access.py
+# Regenerate credentials
+python setup/gmail_auth_setup.py
 ```
 
-## 📊 Output Format
-
-The system generates two types of output files:
-
-### Markdown Format
-```markdown
-# Interview Questions for [Company Name] - [Role]
-
-## Easy Questions
-1. **Question**: What is the difference between a list and a tuple in Python?
-   **Answer**: Lists are mutable, tuples are immutable...
-   **Source**: LeetCode
-
-## Medium Questions
-1. **Question**: Implement a binary search tree...
-   **Answer**: [Detailed solution]
-   **Source**: GitHub
-
-## Hard Questions
-1. **Question**: Design a distributed caching system...
-   **Answer**: [Complex solution]
-   **Source**: Glassdoor
+#### OpenAI API Errors
+```bash
+# Check API key and limits
+echo $OPENAI_API_KEY
 ```
 
-### CSV Format
-```csv
-difficulty,question,answer,source,company,role
-easy,What is the difference between a list and a tuple in Python?,Lists are mutable...,LeetCode,Google,Software Engineer
+#### Memory Issues
+```bash
+# Reduce batch sizes
+export BATCH_SIZE=5
 ```
 
-## 🔧 Configuration
+### Debug Mode
+```bash
+# Enable debug logging
+export LOG_LEVEL=DEBUG
+```
 
-Key configuration options in `.env`:
+## 📊 Export Formats
 
-- `MAX_SEARCH_RESULTS`: Number of search results to process (default: 20)
-- `MAX_TOKENS`: Maximum tokens for GPT-4o responses (default: 4000)
-- `TEMPERATURE`: Creativity level for question generation (default: 0.7)
-- `LOG_LEVEL`: Logging level (default: INFO)
+### Markdown
+- Structured formatting with headers
+- Difficulty-based organization
+- Metadata and statistics
 
-## 📚 Documentation
+### CSV
+- Comma-separated values
+- Quote escaping for special characters
+- All question fields included
 
-- **README.md**: Main documentation (this file)
-- **ENV_SETUP_GUIDE.md**: Detailed environment setup instructions
-- **GMAIL_AUTH_FIX.md**: Gmail authentication troubleshooting guide
-- **PIPELINE_RESULTS_GUIDE.md**: Guide to understanding pipeline results and storage
-- **ENHANCED_JDPARSER_SUMMARY.md**: Summary of JDParser enhancements and improvements
+### JSON
+- Structured data with metadata
+- Job description information
+- Generation timestamps
+
+### Excel
+- Styled headers with blue background
+- Auto-filter for data exploration
+- Metadata sheet with job details
+- Proper column widths and formatting
 
 ## 🤝 Contributing
 
+### Development Setup
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite
+4. Add tests
+5. Run type checking: `mypy --strict jd_agent/`
 6. Submit a pull request
 
-## 📄 License
+### Code Standards
+- Type hints required
+- Docstrings for all functions
+- Comprehensive test coverage
+- Follow PEP 8 style guide
 
-MIT License - see LICENSE file for details.
+---
 
-## 🆘 Support
-
-For issues and questions:
-1. Check the documentation in the `readme/` folder
-2. Search existing issues
-3. Create a new issue with detailed information
-
-## 🔮 Roadmap
-
-- [ ] Support for Outlook/IMAP
-- [ ] Integration with ATS systems
-- [ ] Question difficulty validation
-- [ ] Multi-language support
-- [ ] Web interface
-- [ ] Question quality scoring 
+**Version**: 2.0.0  
+**Last Updated**: January 2025  
+**Python Version**: 3.12+ 
