@@ -11,6 +11,7 @@ from openai.types.chat import ChatCompletionChunk
 from ..utils.config import Config
 from ..utils.logger import get_logger
 from ..utils.context import ContextCompressor
+from ..utils.schemas import QA, QAList
 from .jd_parser import JobDescription
 
 logger = get_logger(__name__)
@@ -131,45 +132,10 @@ class PromptEngine:
         prompt = self._build_prompt(jd, context, difficulty)
         
         try:
-            # Define function schema for structured output
-            function_schema = {
-                "name": "create_questions",
-                "description": "Create interview questions for the specified difficulty level",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "questions": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "question": {
-                                        "type": "string",
-                                        "description": "The interview question text"
-                                    },
-                                    "answer": {
-                                        "type": "string",
-                                        "description": "A detailed answer or explanation"
-                                    },
-                                    "category": {
-                                        "type": "string",
-                                        "enum": ["Technical", "Behavioral", "Problem-Solving", "System Design"],
-                                        "description": "The category of the question"
-                                    },
-                                    "skills": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "List of skills being tested"
-                                    }
-                                },
-                                "required": ["question", "answer", "category", "skills"]
-                            },
-                            "description": "List of interview questions"
-                        }
-                    },
-                    "required": ["questions"]
-                }
-            }
+            # Use Pydantic schema for structured output
+            function_schema = QAList.model_json_schema()
+            function_schema["name"] = "create_questions"
+            function_schema["description"] = "Create interview questions for the specified difficulty level"
             
             # Create streaming response
             stream = self.client.chat.completions.create(
