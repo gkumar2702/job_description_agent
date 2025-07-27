@@ -260,6 +260,60 @@ class PromptEngine:
             difficulty=difficulty
         )
     
+    async def enhance_questions_with_context_async(self, questions: List[Dict[str, Any]], 
+                                                 scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Enhance generated questions with additional context from scraped content concurrently.
+        
+        Args:
+            questions: List of generated questions
+            scraped_content: List of scraped content
+            
+        Returns:
+            List[Dict[str, Any]]: Enhanced questions
+        """
+        if not self.client:
+            return questions
+        
+        # Create semaphore to limit concurrency (stay within rate limits)
+        semaphore = asyncio.Semaphore(5)
+        
+        async def enhance_question_with_semaphore(question: Dict[str, Any]) -> Dict[str, Any]:
+            """Enhance a single question with semaphore-based rate limiting."""
+            async with semaphore:
+                try:
+                    # Find relevant content for this question
+                    relevant_content = self._find_relevant_content(question, scraped_content)
+                    
+                    if relevant_content:
+                        enhanced_question = await self._enhance_single_question_async(question, relevant_content)
+                        return enhanced_question
+                    else:
+                        return question
+                        
+                except Exception as e:
+                    logger.error(f"Error enhancing question: {e}")
+                    return question
+        
+        # Build list of coroutines for concurrent execution
+        enhancement_tasks = [enhance_question_with_semaphore(question) for question in questions]
+        
+        # Execute all enhancements concurrently with rate limiting
+        logger.info(f"Starting concurrent enhancement of {len(questions)} questions with max 5 concurrent requests")
+        enhanced_questions = await asyncio.gather(*enhancement_tasks, return_exceptions=True)
+        
+        # Handle any exceptions that occurred during enhancement
+        final_questions = []
+        for i, result in enumerate(enhanced_questions):
+            if isinstance(result, Exception):
+                logger.error(f"Enhancement failed for question {i}: {result}")
+                final_questions.append(questions[i])  # Return original question
+            else:
+                final_questions.append(result)
+        
+        logger.info(f"Completed enhancement of {len(final_questions)} questions")
+        return final_questions
+    
     def enhance_questions_with_context(self, questions: List[Dict[str, Any]], 
                                      scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -275,6 +329,27 @@ class PromptEngine:
         if not self.client:
             return questions
         
+        try:
+            # Run async method in sync context
+            return asyncio.run(self.enhance_questions_with_context_async(questions, scraped_content))
+        except Exception as e:
+            logger.error(f"Error in concurrent enhancement: {e}")
+            # Fallback to sequential processing
+            return self._enhance_questions_sequentially(questions, scraped_content)
+    
+    def _enhance_questions_sequentially(self, questions: List[Dict[str, Any]], 
+                                      scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Fallback sequential enhancement method.
+        
+        Args:
+            questions: List of generated questions
+            scraped_content: List of scraped content
+            
+        Returns:
+            List[Dict[str, Any]]: Enhanced questions
+        """
+        logger.warning("Falling back to sequential enhancement due to async error")
         enhanced_questions = []
         
         for question in questions:
@@ -340,10 +415,53 @@ class PromptEngine:
         
         return best_match if best_score >= 2 else None
     
+    async def _enhance_single_question_async(self, question: Dict[str, Any], 
+                                            relevant_content: str) -> Dict[str, Any]:
+        """
+        Enhance a single question with additional context asynchronously.
+        
+        Args:
+            question: Question dictionary
+            relevant_content: Relevant content for enhancement
+            
+        Returns:
+            Dict[str, Any]: Enhanced question
+        """
+        prompt = QUESTION_ENHANCEMENT_TEMPLATE.format(
+            question=question.get('question', ''),
+            answer=question.get('answer', ''),
+            relevant_content=relevant_content
+        )
+        
+        try:
+            response = self._create_chat_completion_with_retry(
+                model=self.config.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                temperature=self.config.TEMPERATURE,
+                top_p=self.config.TOP_P
+            )
+            
+            enhanced_answer = response.choices[0].message.content.strip()
+            
+            # Update the question with enhanced answer
+            enhanced_question = question.copy()
+            enhanced_question['answer'] = enhanced_answer
+            enhanced_question['enhanced'] = True
+            
+            return enhanced_question
+            
+        except Exception as e:
+            logger.error(f"Error enhancing question: {e}")
+            return question
+    
     def _enhance_single_question(self, question: Dict[str, Any], 
                                relevant_content: str) -> Dict[str, Any]:
         """
-        Enhance a single question with additional context.
+        Enhance a single question with additional context (synchronous version).
         
         Args:
             question: Question dictionary
