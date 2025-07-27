@@ -7,6 +7,7 @@ import email
 import os
 import json
 import webbrowser
+import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from google.auth.transport.requests import Request
@@ -26,6 +27,26 @@ class EmailCollector:
     
     # Gmail API scopes
     SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+    
+    # Allowed domains for job-related emails
+    ALLOWED_DOMAINS = [
+        "linkedin.com", "naukri.com", "indeed.com", "monster.com",
+        "glassdoor.com", "careerbuilder.com", "simplyhired.com",
+        "ziprecruiter.com", "dice.com", "angel.co", "stackoverflow.com"
+    ]
+    
+    # Keywords that indicate job descriptions
+    JOB_KEYWORDS = [
+        "job", "job opportunity", "hiring", "vacancy", "opening", "career",
+        "position", "role", "employment", "recruitment", "staffing",
+        "job description", "job posting", "career opportunity", "we are hiring",
+        "open position", "job opening", "employment opportunity",
+        "join our team", "apply now", "job requirements",
+        "qualifications", "responsibilities", "job duties"
+    ]
+    
+    # Regex pattern for job description attachments
+    JD_ATTACHMENT_PATTERN = re.compile(r'.*(JD|job[-_ ]?description).*(pdf|docx?)$', re.IGNORECASE)
     
     def __init__(self):
         """Initialize the email collector."""
@@ -159,9 +180,292 @@ class EmailCollector:
             logger.error(f"Failed to get OAuth credentials: {e}")
             return None
     
+    def _build_enhanced_search_query(self, days_back: int = 30) -> str:
+        """
+        Build an enhanced search query that captures all potential job description emails.
+        
+        Args:
+            days_back: Number of days back to search for emails
+            
+        Returns:
+            str: Gmail search query
+        """
+        # Base query components
+        base_filters = "in:anywhere NOT in:spam"
+        
+        # Date filter
+        after_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
+        date_filter = f"after:{after_date}"
+        
+        # Domain filter
+        domain_queries = [f"from:{domain}" for domain in self.ALLOWED_DOMAINS]
+        domain_filter = f"({' OR '.join(domain_queries)})"
+        
+        # Keyword filter
+        keyword_queries = [f'"{keyword}"' for keyword in self.JOB_KEYWORDS]
+        keyword_filter = f"({' OR '.join(keyword_queries)})"
+        
+        # Attachment filter
+        attachment_filter = "has:attachment"
+        
+        # Combine all filters
+        # Return emails that match: (domain OR keyword) AND (attachment OR keyword in subject/body)
+        query = f"{base_filters} {date_filter} AND ({domain_filter} OR {keyword_filter})"
+        
+        logger.info(f"Built enhanced search query: {query}")
+        return query
+    
+    def fetch_job_description_threads(self, days_back: int = 30) -> List[Dict[str, Any]]:
+        """
+        Returns threads likely to contain a job description.
+
+        Detection logic:
+        - domain_match: sender domain in ALLOWED_DOMAINS
+        - keyword_hit: any KEYWORD in subject or snippet
+        - attachment_hit: attachment filename regex
+        A thread is returned if (domain_match OR keyword_hit OR attachment_hit) is True.
+        
+        Args:
+            days_back: Number of days back to search for emails
+            
+        Returns:
+            List[Dict[str, Any]]: List of thread data with detection details
+        """
+        if not self.service:
+            logger.error("Gmail service not available")
+            return []
+        
+        try:
+            # Build enhanced search query
+            query = self._build_enhanced_search_query(days_back)
+            
+            # Search for threads
+            results = self.service.users().threads().list(
+                userId='me', 
+                q=query,
+                maxResults=100
+            ).execute()
+            
+            threads = results.get('threads', [])
+            if not threads:
+                logger.info("No job description threads found")
+                return []
+            
+            logger.info(f"Found {len(threads)} potential job description threads")
+            
+            # Process each thread
+            job_threads = []
+            for thread in threads:
+                try:
+                    thread_data = self._analyze_thread_for_job_description(thread['id'])
+                    if thread_data:
+                        job_threads.append(thread_data)
+                except Exception as e:
+                    logger.error(f"Failed to analyze thread {thread['id']}: {e}")
+                    continue
+            
+            logger.info(f"Successfully identified {len(job_threads)} job description threads")
+            return job_threads
+            
+        except HttpError as error:
+            logger.error(f"Gmail API error: {error}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error fetching threads: {e}")
+            return []
+    
+    def _analyze_thread_for_job_description(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Analyze a thread to determine if it contains job descriptions.
+        
+        Args:
+            thread_id: Gmail thread ID
+            
+        Returns:
+            Optional[Dict[str, Any]]: Thread analysis data or None
+        """
+        try:
+            # Get thread details
+            thread = self.service.users().threads().get(
+                userId='me', 
+                id=thread_id
+            ).execute()
+            
+            messages = thread.get('messages', [])
+            if not messages:
+                return None
+            
+            # Analyze each message in the thread
+            thread_analysis = {
+                'thread_id': thread_id,
+                'message_count': len(messages),
+                'detection_reasons': [],
+                'messages': [],
+                'has_job_description': False
+            }
+            
+            for message in messages:
+                message_analysis = self._analyze_message_for_job_description(message)
+                if message_analysis:
+                    thread_analysis['messages'].append(message_analysis)
+                    thread_analysis['detection_reasons'].extend(message_analysis['detection_reasons'])
+                    if message_analysis['is_job_description']:
+                        thread_analysis['has_job_description'] = True
+            
+            # Remove duplicate detection reasons
+            thread_analysis['detection_reasons'] = list(set(thread_analysis['detection_reasons']))
+            
+            # Return thread if it contains job descriptions
+            if thread_analysis['has_job_description']:
+                return thread_analysis
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze thread {thread_id}: {e}")
+            return None
+    
+    def _analyze_message_for_job_description(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Analyze a message to determine if it contains job descriptions.
+        
+        Args:
+            message: Gmail message data
+            
+        Returns:
+            Optional[Dict[str, Any]]: Message analysis data or None
+        """
+        try:
+            headers = message['payload']['headers']
+            
+            # Extract basic information
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), '')
+            date = next((h['value'] for h in headers if h['name'] == 'Date'), '')
+            
+            # Extract email body
+            body = self._extract_email_body(message['payload'])
+            snippet = message.get('snippet', '')
+            
+            # Analyze detection criteria
+            detection_reasons = []
+            is_job_description = False
+            
+            # 1. Domain match
+            domain_match = self._check_domain_match(sender)
+            if domain_match:
+                detection_reasons.append(f"domain_match:{domain_match}")
+                is_job_description = True
+            
+            # 2. Keyword hit
+            keyword_hit = self._check_keyword_hit(subject, body, snippet)
+            if keyword_hit:
+                detection_reasons.append(f"keyword_hit:{keyword_hit}")
+                is_job_description = True
+            
+            # 3. Attachment hit
+            attachment_hit = self._check_attachment_hit(message['payload'])
+            if attachment_hit:
+                detection_reasons.append(f"attachment_hit:{attachment_hit}")
+                is_job_description = True
+            
+            if is_job_description:
+                return {
+                    'message_id': message['id'],
+                    'subject': subject,
+                    'sender': sender,
+                    'date': date,
+                    'body': body,
+                    'snippet': snippet,
+                    'detection_reasons': detection_reasons,
+                    'is_job_description': True,
+                    'domain_match': domain_match,
+                    'keyword_hit': keyword_hit,
+                    'attachment_hit': attachment_hit
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze message {message.get('id', 'unknown')}: {e}")
+            return None
+    
+    def _check_domain_match(self, sender: str) -> Optional[str]:
+        """
+        Check if sender domain is in allowed domains.
+        
+        Args:
+            sender: Email sender address
+            
+        Returns:
+            Optional[str]: Matched domain or None
+        """
+        try:
+            # Extract domain from email address
+            if '@' in sender:
+                domain = sender.split('@')[1].lower()
+                for allowed_domain in self.ALLOWED_DOMAINS:
+                    if domain == allowed_domain or domain.endswith(f'.{allowed_domain}'):
+                        return allowed_domain
+        except Exception as e:
+            logger.debug(f"Error checking domain match: {e}")
+        
+        return None
+    
+    def _check_keyword_hit(self, subject: str, body: str, snippet: str) -> Optional[str]:
+        """
+        Check if any job keywords are present in subject, body, or snippet.
+        
+        Args:
+            subject: Email subject
+            body: Email body
+            snippet: Email snippet
+            
+        Returns:
+            Optional[str]: Matched keyword or None
+        """
+        text = f"{subject} {body} {snippet}".lower()
+        
+        # Sort keywords by length (longest first) to avoid partial matches
+        sorted_keywords = sorted(self.JOB_KEYWORDS, key=len, reverse=True)
+        
+        for keyword in sorted_keywords:
+            keyword_lower = keyword.lower()
+            # Use word boundaries to avoid partial matches
+            import re
+            pattern = r'\b' + re.escape(keyword_lower) + r'\b'
+            if re.search(pattern, text):
+                return keyword
+        
+        return None
+    
+    def _check_attachment_hit(self, payload: Dict[str, Any]) -> Optional[str]:
+        """
+        Check if any attachments match the job description pattern.
+        
+        Args:
+            payload: Message payload
+            
+        Returns:
+            Optional[str]: Matched attachment filename or None
+        """
+        try:
+            attachments = []
+            self._extract_attachments(payload, attachments)
+            
+            for attachment in attachments:
+                filename = attachment.get('filename', '')
+                if self.JD_ATTACHMENT_PATTERN.match(filename):
+                    return filename
+            
+        except Exception as e:
+            logger.debug(f"Error checking attachment hit: {e}")
+        
+        return None
+    
     def fetch_jd_emails(self, days_back: int = 30) -> List[Dict[str, Any]]:
         """
-        Fetch job description emails from Gmail.
+        Fetch job description emails from Gmail (legacy method for backward compatibility).
         
         Args:
             days_back: Number of days back to search for emails
@@ -169,52 +473,23 @@ class EmailCollector:
         Returns:
             List[Dict[str, Any]]: List of email data
         """
-        if not self.service:
-            logger.error("Gmail service not available")
-            return []
+        # Use the new enhanced method and convert to legacy format
+        threads = self.fetch_job_description_threads(days_back)
         
-        try:
-            # Calculate date range
-            after_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
-            
-            # Build search query
-            query = f"{Config.EMAIL_SEARCH_QUERY} after:{after_date}"
-            logger.info(f"Searching for emails with query: {query}")
-            
-            # Search for emails
-            results = self.service.users().messages().list(
-                userId='me', 
-                q=query,
-                maxResults=50
-            ).execute()
-            
-            messages = results.get('messages', [])
-            if not messages:
-                logger.info("No job description emails found")
-                return []
-            
-            logger.info(f"Found {len(messages)} potential job description emails")
-            
-            # Fetch full email details
-            emails = []
-            for message in messages:
-                try:
-                    email_data = self._fetch_email_details(message['id'])
-                    if email_data:
-                        emails.append(email_data)
-                except Exception as e:
-                    logger.error(f"Failed to fetch email {message['id']}: {e}")
-                    continue
-            
-            logger.info(f"Successfully processed {len(emails)} emails")
-            return emails
-            
-        except HttpError as error:
-            logger.error(f"Gmail API error: {error}")
-            return []
-        except Exception as e:
-            logger.error(f"Unexpected error fetching emails: {e}")
-            return []
+        emails = []
+        for thread in threads:
+            for message in thread.get('messages', []):
+                emails.append({
+                    'id': message['message_id'],
+                    'subject': message['subject'],
+                    'from': message['sender'],
+                    'date': message['date'],
+                    'body': message['body'],
+                    'thread_id': thread['thread_id'],
+                    'snippet': message['snippet']
+                })
+        
+        return emails
     
     def _fetch_email_details(self, message_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -298,7 +573,7 @@ class EmailCollector:
     
     def _is_job_description(self, subject: str, body: str) -> bool:
         """
-        Determine if an email contains a job description.
+        Determine if an email contains a job description (legacy method).
         
         Args:
             subject: Email subject
@@ -307,20 +582,11 @@ class EmailCollector:
         Returns:
             bool: True if email appears to be a job description
         """
-        # Keywords that indicate a job description
-        jd_keywords = [
-            'job description', 'job posting', 'position description',
-            'role description', 'career opportunity', 'we are hiring',
-            'open position', 'job opening', 'employment opportunity',
-            'join our team', 'apply now', 'job requirements',
-            'qualifications', 'responsibilities', 'job duties'
-        ]
-        
-        # Check subject and body for keywords
+        # Use the new keyword detection logic
         text = f"{subject} {body}".lower()
         
         # Count keyword matches
-        matches = sum(1 for keyword in jd_keywords if keyword in text)
+        matches = sum(1 for keyword in self.JOB_KEYWORDS if keyword.lower() in text)
         
         # Consider it a job description if we have at least 2 keyword matches
         return matches >= 2
