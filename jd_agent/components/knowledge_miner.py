@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 import random
 
-import requests
+import aiohttp
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -24,7 +24,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
 from playwright.async_api import async_playwright
-import aiohttp
 from asyncio_throttle import Throttler
 
 from ..utils.config import Config
@@ -46,15 +45,80 @@ class ScrapedContent:
 
 
 class FreeWebScraper:
-    """Free web scraping using multiple methods."""
+    """Free web scraping using multiple methods with aiohttp for async requests."""
     
     def __init__(self, config: Config):
         self.config = config
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-        })
         self.throttler = Throttler(rate_limit=2, period=1)  # 2 requests per second
+        self._session: Optional[aiohttp.ClientSession] = None
+        
+    async def __aenter__(self):
+        """Create aiohttp session when entering async context."""
+        connector = aiohttp.TCPConnector(
+            limit=10,  # Connection pool size
+            limit_per_host=5,  # Max connections per host
+            ttl_dns_cache=300,  # DNS cache TTL
+            use_dns_cache=True,
+        )
+        
+        timeout = aiohttp.ClientTimeout(total=10)  # 10 second timeout
+        
+        self._session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+        )
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Close aiohttp session when exiting async context."""
+        if self._session:
+            await self._session.close()
+            self._session = None
+        
+    async def scrape_with_aiohttp(self, url: str) -> Optional[ScrapedContent]:
+        """Scrape content using aiohttp (for simple pages)."""
+        if not self._session:
+            raise RuntimeError("Scraper must be used as async context manager")
+            
+        try:
+            # Use throttler if available, otherwise make request directly
+            if self.throttler:
+                async with self.throttler:
+                    async with self._session.get(url) as response:
+                        response.raise_for_status()
+                        content = await response.text()
+            else:
+                async with self._session.get(url) as response:
+                    response.raise_for_status()
+                    content = await response.text()
+                    
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Remove unwanted elements
+            for element in soup(["script", "style", "nav", "footer", "header"]):
+                element.decompose()
+            
+            title = soup.title.string if soup.title else "No Title"
+            text_content = soup.get_text()
+            lines = (line.strip() for line in text_content.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text_content = ' '.join(chunk for chunk in chunks if chunk)
+            
+            return ScrapedContent(
+                url=url,
+                title=title,
+                content=text_content[:5000],
+                source=self._extract_source(url),
+                relevance_score=0.0,
+                timestamp=time.time()
+            )
+                
+        except Exception as e:
+            logger.warning(f"Aiohttp scraping failed for {url}: {e}")
+            return None
         
     async def scrape_with_playwright(self, url: str) -> Optional[ScrapedContent]:
         """Scrape content using Playwright (handles JavaScript)."""
@@ -164,38 +228,6 @@ class FreeWebScraper:
             if driver:
                 driver.quit()
     
-    async def scrape_with_requests(self, url: str) -> Optional[ScrapedContent]:
-        """Scrape content using requests (for simple pages)."""
-        try:
-            async with self.throttler:
-                response = self.session.get(url, timeout=10)
-                response.raise_for_status()
-                
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                # Remove unwanted elements
-                for element in soup(["script", "style", "nav", "footer", "header"]):
-                    element.decompose()
-                
-                title = soup.title.string if soup.title else "No Title"
-                text_content = soup.get_text()
-                lines = (line.strip() for line in text_content.splitlines())
-                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                text_content = ' '.join(chunk for chunk in chunks if chunk)
-                
-                return ScrapedContent(
-                    url=url,
-                    title=title,
-                    content=text_content[:5000],
-                    source=self._extract_source(url),
-                    relevance_score=0.0,
-                    timestamp=time.time()
-                )
-                
-        except Exception as e:
-            logger.warning(f"Requests scraping failed for {url}: {e}")
-            return None
-    
     def _extract_source(self, url: str) -> str:
         """Extract source name from URL."""
         domain = urlparse(url).netloc
@@ -229,7 +261,6 @@ class KnowledgeMiner:
     def __init__(self, config: Config, database: Database):
         self.config = config
         self.database = database
-        self.scraper = FreeWebScraper(config)
         self.serpapi_calls = 0
         self.max_serpapi_calls = 5  # Limit SerpAPI usage
         
@@ -287,21 +318,23 @@ class KnowledgeMiner:
         
         all_content = []
         
-        # 1. Direct scraping from known sources
-        logger.info("Scraping direct sources...")
-        direct_content = await self._scrape_direct_sources(jd)
-        all_content.extend(direct_content)
-        
-        # 2. Limited SerpAPI search (only if we haven't exceeded limits)
-        if self.serpapi_calls < self.max_serpapi_calls and self.config.serpapi_key:
-            logger.info("Performing limited SerpAPI search...")
-            serpapi_content = await self._search_with_serpapi(jd)
-            all_content.extend(serpapi_content)
-        
-        # 3. Free search alternatives
-        logger.info("Performing free search alternatives...")
-        free_search_content = await self._free_search_alternatives(jd)
-        all_content.extend(free_search_content)
+        # Use async context manager for scraper
+        async with FreeWebScraper(self.config) as scraper:
+            # 1. Direct scraping from known sources
+            logger.info("Scraping direct sources...")
+            direct_content = await self._scrape_direct_sources(jd, scraper)
+            all_content.extend(direct_content)
+            
+            # 2. Limited SerpAPI search (only if we haven't exceeded limits)
+            if self.serpapi_calls < self.max_serpapi_calls and self.config.serpapi_key:
+                logger.info("Performing limited SerpAPI search...")
+                serpapi_content = await self._search_with_serpapi(jd, scraper)
+                all_content.extend(serpapi_content)
+            
+            # 3. Free search alternatives
+            logger.info("Performing free search alternatives...")
+            free_search_content = await self._free_search_alternatives(jd, scraper)
+            all_content.extend(free_search_content)
         
         # 4. Filter and score content
         logger.info("Filtering and scoring content...")
@@ -317,7 +350,7 @@ class KnowledgeMiner:
         logger.info(f"Mining completed. Found {len(filtered_content)} relevant pieces of content")
         return filtered_content
     
-    async def _scrape_direct_sources(self, jd: JobDescription) -> List[ScrapedContent]:
+    async def _scrape_direct_sources(self, jd: JobDescription, scraper: FreeWebScraper) -> List[ScrapedContent]:
         """Scrape content directly from known sources."""
         content_list = []
         
@@ -327,23 +360,20 @@ class KnowledgeMiner:
                     # Try different scraping methods
                     content = None
                     
-                    # First try requests (fastest)
-                    content = await self.scraper.scrape_with_requests(url)
+                    # First try aiohttp (fastest)
+                    content = await scraper.scrape_with_aiohttp(url)
                     
                     # If that fails, try Playwright
                     if not content:
-                        content = await self.scraper.scrape_with_playwright(url)
+                        content = await scraper.scrape_with_playwright(url)
                     
                     # If that fails, try Selenium
                     if not content:
-                        content = self.scraper.scrape_with_selenium(url)
+                        content = scraper.scrape_with_selenium(url)
                     
                     if content:
                         content_list.append(content)
                         logger.info(f"Successfully scraped {url}")
-                    
-                    # Add delay between requests
-                    await asyncio.sleep(random.uniform(1, 3))
                     
                 except Exception as e:
                     logger.warning(f"Failed to scrape {url}: {e}")
@@ -351,7 +381,7 @@ class KnowledgeMiner:
         
         return content_list
     
-    async def _search_with_serpapi(self, jd: JobDescription) -> List[ScrapedContent]:
+    async def _search_with_serpapi(self, jd: JobDescription, scraper: FreeWebScraper) -> List[ScrapedContent]:
         """Limited SerpAPI search."""
         if not self.config.serpapi_key or self.serpapi_calls >= self.max_serpapi_calls:
             return []
@@ -379,12 +409,9 @@ class KnowledgeMiner:
                     for result in results["organic_results"][:3]:  # Limit to 3 results per query
                         url = result.get("link")
                         if url:
-                            content = await self.scraper.scrape_with_playwright(url)
+                            content = await scraper.scrape_with_playwright(url)
                             if content:
                                 content_list.append(content)
-                
-                # Add delay between SerpAPI calls
-                await asyncio.sleep(2)
             
             return content_list
             
@@ -392,25 +419,25 @@ class KnowledgeMiner:
             logger.error(f"SerpAPI search failed: {e}")
             return []
     
-    async def _free_search_alternatives(self, jd: JobDescription) -> List[ScrapedContent]:
+    async def _free_search_alternatives(self, jd: JobDescription, scraper: FreeWebScraper) -> List[ScrapedContent]:
         """Use free search alternatives."""
         content_list = []
         
         # 1. GitHub API search
-        github_content = await self._search_github(jd)
+        github_content = await self._search_github(jd, scraper)
         content_list.extend(github_content)
         
         # 2. Reddit API search
-        reddit_content = await self._search_reddit(jd)
+        reddit_content = await self._search_reddit(jd, scraper)
         content_list.extend(reddit_content)
         
         # 3. Direct site scraping with common patterns
-        direct_content = await self._scrape_common_patterns(jd)
+        direct_content = await self._scrape_common_patterns(jd, scraper)
         content_list.extend(direct_content)
         
         return content_list
     
-    async def _search_github(self, jd: JobDescription) -> List[ScrapedContent]:
+    async def _search_github(self, jd: JobDescription, scraper: FreeWebScraper) -> List[ScrapedContent]:
         """Search GitHub repositories for interview questions."""
         content_list = []
         
@@ -431,23 +458,20 @@ class KnowledgeMiner:
                     'User-Agent': 'JD-Agent/1.0'
                 }
                 
-                async with self.scraper.throttler:
-                    response = self.session.get(url, headers=headers, timeout=10)
+                # Use aiohttp session from scraper
+                async with scraper._session.get(url, headers=headers) as response:
                     response.raise_for_status()
-                    
-                    data = response.json()
+                    data = await response.json()
                     
                     for repo in data.get('items', [])[:3]:  # Limit to 3 repos
                         repo_url = repo['html_url']
                         
                         # Try to scrape README
                         readme_url = f"{repo_url}/blob/main/readme/README.md"
-                        content = await self.scraper.scrape_with_requests(readme_url)
+                        content = await scraper.scrape_with_aiohttp(readme_url)
                         
                         if content:
                             content_list.append(content)
-                
-                await asyncio.sleep(1)  # Rate limiting
                 
             except Exception as e:
                 logger.warning(f"GitHub search failed for {query}: {e}")
@@ -455,7 +479,7 @@ class KnowledgeMiner:
         
         return content_list
     
-    async def _search_reddit(self, jd: JobDescription) -> List[ScrapedContent]:
+    async def _search_reddit(self, jd: JobDescription, scraper: FreeWebScraper) -> List[ScrapedContent]:
         """Search Reddit for interview questions."""
         content_list = []
         
@@ -474,21 +498,18 @@ class KnowledgeMiner:
                 url = f"https://www.reddit.com/r/{subreddit}/search.json?q={jd.role}%20interview&restrict_sr=on&sort=relevance&t=year"
                 headers = {'User-Agent': 'JD-Agent/1.0'}
                 
-                async with self.scraper.throttler:
-                    response = self.session.get(url, headers=headers, timeout=10)
+                # Use aiohttp session from scraper
+                async with scraper._session.get(url, headers=headers) as response:
                     response.raise_for_status()
-                    
-                    data = response.json()
+                    data = await response.json()
                     
                     for post in data.get('data', {}).get('children', [])[:3]:
                         post_data = post['data']
                         post_url = f"https://www.reddit.com{post_data['permalink']}"
                         
-                        content = await self.scraper.scrape_with_requests(post_url)
+                        content = await scraper.scrape_with_aiohttp(post_url)
                         if content:
                             content_list.append(content)
-                
-                await asyncio.sleep(1)
                 
             except Exception as e:
                 logger.warning(f"Reddit search failed for r/{subreddit}: {e}")
@@ -496,7 +517,7 @@ class KnowledgeMiner:
         
         return content_list
     
-    async def _scrape_common_patterns(self, jd: JobDescription) -> List[ScrapedContent]:
+    async def _scrape_common_patterns(self, jd: JobDescription, scraper: FreeWebScraper) -> List[ScrapedContent]:
         """Scrape common interview question patterns from various sites."""
         content_list = []
         
@@ -509,11 +530,9 @@ class KnowledgeMiner:
         
         for url in common_urls:
             try:
-                content = await self.scraper.scrape_with_playwright(url)
+                content = await scraper.scrape_with_playwright(url)
                 if content:
                     content_list.append(content)
-                
-                await asyncio.sleep(random.uniform(1, 2))
                 
             except Exception as e:
                 logger.warning(f"Failed to scrape {url}: {e}")
