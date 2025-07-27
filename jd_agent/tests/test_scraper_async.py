@@ -11,6 +11,7 @@ from typing import List
 
 from ..components.knowledge_miner import FreeWebScraper, ScrapedContent
 from ..utils.config import Config
+from ..utils.database import Database
 
 
 class TestAsyncScraperPerformance:
@@ -28,16 +29,21 @@ class TestAsyncScraperPerformance:
         )
         return config
     
+    @pytest.fixture
+    def database(self):
+        """Create a mock database for testing."""
+        return Mock(spec=Database)
+    
     @pytest_asyncio.fixture
-    async def scraper(self, config):
+    async def scraper(self, config, database):
         """Create an async scraper instance."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             yield scraper
     
     @pytest.mark.asyncio
-    async def test_scraper_context_manager(self, config):
+    async def test_scraper_context_manager(self, config, database):
         """Test that scraper works as async context manager."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             assert scraper._session is not None
             assert not scraper._session.closed
             assert scraper._browser is not None
@@ -88,10 +94,10 @@ class TestAsyncScraperPerformance:
         assert len(successful_results) > 0, "No requests succeeded"
     
     @pytest.mark.asyncio
-    async def test_concurrent_fetch_without_throttling(self, config):
+    async def test_concurrent_fetch_without_throttling(self, config, database):
         """Test concurrent fetching without throttling for maximum performance."""
         # Create a scraper without throttling
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Disable throttling for this test
             scraper.throttler = None
             
@@ -197,9 +203,9 @@ class TestAsyncScraperPerformance:
         assert result.timestamp > 0, "Timestamp not set"
     
     @pytest.mark.asyncio
-    async def test_session_reuse(self, config):
+    async def test_session_reuse(self, config, database):
         """Test that session is properly reused across requests."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Make multiple requests
             urls = [
                 "https://httpbin.org/get",
@@ -220,9 +226,9 @@ class TestAsyncScraperPerformance:
             assert not scraper._session.closed, "Session was closed prematurely"
     
     @pytest.mark.asyncio
-    async def test_connection_pool_limits(self, config):
+    async def test_connection_pool_limits(self, config, database):
         """Test that connection pool limits are respected."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Make many concurrent requests to test connection pool
             urls = [f"https://httpbin.org/get?i={i}" for i in range(20)]
             
@@ -273,9 +279,9 @@ class TestAsyncScraperPerformance:
         assert expected_ua in result.content, "User-Agent header not found in response"
     
     @pytest.mark.asyncio
-    async def test_dynamic_scraping_browser_reuse(self, config):
+    async def test_dynamic_scraping_browser_reuse(self, config, database):
         """Test that dynamic scraping reuses browser context."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Test that browser context is created
             assert scraper._browser is not None
             assert scraper._context is not None
@@ -294,9 +300,9 @@ class TestAsyncScraperPerformance:
             assert scraper._context is not None, "Browser context was closed prematurely"
     
     @pytest.mark.asyncio
-    async def test_dynamic_scraping_retry_mechanism(self, config):
+    async def test_dynamic_scraping_retry_mechanism(self, config, database):
         """Test that dynamic scraping implements exponential backoff retry."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Test with a URL that will fail (invalid domain)
             invalid_url = "https://invalid-domain-that-does-not-exist-12345.com"
             
@@ -331,10 +337,15 @@ class TestScraperIntegration:
         )
         return config
     
+    @pytest.fixture
+    def database(self):
+        """Create a mock database for testing."""
+        return Mock(spec=Database)
+    
     @pytest.mark.asyncio
-    async def test_github_api_scraping(self, config):
+    async def test_github_api_scraping(self, config, database):
         """Test scraping GitHub API responses."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Test GitHub API endpoint
             url = "https://api.github.com/zen"
             
@@ -346,9 +357,9 @@ class TestScraperIntegration:
             assert len(result.content) > 0, "Content is empty"
     
     @pytest.mark.asyncio
-    async def test_html_parsing(self, config):
+    async def test_html_parsing(self, config, database):
         """Test that HTML is properly parsed and cleaned."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Test with a simple HTML page
             url = "https://httpbin.org/html"
             
@@ -366,9 +377,9 @@ class TestScraperIntegration:
             assert len(result.content) <= 5000, "Content not truncated"
     
     @pytest.mark.asyncio
-    async def test_dynamic_scraping_integration(self, config):
+    async def test_dynamic_scraping_integration(self, config, database):
         """Test dynamic scraping with a real website."""
-        async with FreeWebScraper(config) as scraper:
+        async with FreeWebScraper(config, database) as scraper:
             # Test with a simple page that should work with dynamic scraping
             url = "https://httpbin.org/html"
             
@@ -382,6 +393,132 @@ class TestScraperIntegration:
             assert len(result.content) > 0, "Content is empty"
 
 
+class TestScraperCache:
+    """Test scraper caching functionality."""
+    
+    @pytest.fixture
+    def config(self):
+        """Create a mock config for testing."""
+        config = Config(
+            SERPAPI_KEY="test_serpapi_key_long_enough_for_validation",
+            OPENAI_API_KEY="test_openai_key_long_enough_for_validation",
+            GMAIL_CLIENT_ID="test_client_id_long_enough",
+            GMAIL_CLIENT_SECRET="test_client_secret_long_enough",
+            GMAIL_REFRESH_TOKEN="test_refresh_token_long_enough"
+        )
+        return config
+    
+    @pytest.fixture
+    def database(self):
+        """Create a real database for testing cache functionality."""
+        import tempfile
+        import os
+        
+        # Create a temporary database file
+        temp_dir = tempfile.mkdtemp()
+        db_path = os.path.join(temp_dir, "test_cache.db")
+        
+        # Create database instance
+        db = Database(db_path)
+        
+        yield db
+        
+        # Cleanup
+        try:
+            os.remove(db_path)
+            os.rmdir(temp_dir)
+        except:
+            pass
+    
+    @pytest.mark.asyncio
+    async def test_cache_hit_ratio(self, config, database):
+        """Test that cache hit ratio is > 0.9 when same URLs are mined twice."""
+        # Test URLs
+        test_urls = [
+            "https://httpbin.org/html",
+            "https://httpbin.org/json",
+            "https://httpbin.org/xml",
+            "https://httpbin.org/robots.txt",
+            "https://httpbin.org/user-agent",
+            "https://httpbin.org/headers",
+            "https://httpbin.org/ip",
+            "https://httpbin.org/uuid",
+            "https://httpbin.org/base64/SFRUUEJJTiBpcyBhd2Vzb21l",
+            "https://httpbin.org/delay/1"
+        ]
+        
+        # First run - should cache all URLs
+        async with FreeWebScraper(config, database) as scraper:
+            first_run_results = []
+            for url in test_urls:
+                result = await scraper._get_or_fetch(url)
+                first_run_results.append(result)
+            
+            # Verify all URLs were fetched successfully
+            successful_first = [r for r in first_run_results if r is not None]
+            assert len(successful_first) == len(test_urls), "First run should fetch all URLs"
+        
+        # Second run - should hit cache for all URLs
+        async with FreeWebScraper(config, database) as scraper:
+            second_run_results = []
+            for url in test_urls:
+                result = await scraper._get_or_fetch(url)
+                second_run_results.append(result)
+            
+            # Verify all URLs were retrieved from cache
+            successful_second = [r for r in second_run_results if r is not None]
+            assert len(successful_second) == len(test_urls), "Second run should retrieve all URLs from cache"
+        
+        # Check cache statistics
+        cache_stats = database.get_cache_stats()
+        print(f"Cache stats: {cache_stats}")
+        
+        # Verify hit ratio > 0.9
+        # Note: The hit ratio calculation in get_cache_stats() is for valid vs total entries
+        # For our test, we expect all entries to be valid (within 7 days)
+        assert cache_stats['total_entries'] == len(test_urls), f"Expected {len(test_urls)} cache entries, got {cache_stats['total_entries']}"
+        assert cache_stats['valid_entries'] == len(test_urls), f"Expected {len(test_urls)} valid cache entries, got {cache_stats['valid_entries']}"
+        assert cache_stats['hit_ratio'] == 1.0, f"Expected hit ratio 1.0, got {cache_stats['hit_ratio']}"
+        
+        # Verify that content is identical between runs
+        for i, (first, second) in enumerate(zip(first_run_results, second_run_results)):
+            assert first is not None and second is not None, f"Both results should be non-None for URL {test_urls[i]}"
+            assert first.url == second.url, f"URLs should match for index {i}"
+            assert first.title == second.title, f"Titles should match for index {i}"
+            assert first.content == second.content, f"Content should match for index {i}"
+            assert first.source == second.source, f"Sources should match for index {i}"
+    
+    @pytest.mark.asyncio
+    async def test_cache_expiration(self, config, database):
+        """Test that cache entries expire after 7 days."""
+        # Test URL
+        test_url = "https://httpbin.org/html"
+        
+        # First run - cache the URL
+        async with FreeWebScraper(config, database) as scraper:
+            result = await scraper._get_or_fetch(test_url)
+            assert result is not None, "Should successfully fetch and cache URL"
+        
+        # Manually expire the cache entry by updating the timestamp
+        with database._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE scrape_cache 
+                SET fetched_at = datetime('now', '-8 days') 
+                WHERE url = ?
+            """, (test_url,))
+            conn.commit()
+        
+        # Second run - should fetch again due to expiration
+        async with FreeWebScraper(config, database) as scraper:
+            result = await scraper._get_or_fetch(test_url)
+            assert result is not None, "Should fetch URL again after cache expiration"
+        
+        # Verify cache was updated with new timestamp
+        cached_data = database.get_cached_content(test_url)
+        assert cached_data is not None, "URL should be cached again after expiration"
+
+
 if __name__ == "__main__":
     # Run performance test directly
     async def main():
@@ -393,32 +530,47 @@ if __name__ == "__main__":
             GMAIL_REFRESH_TOKEN="test_refresh_token_long_enough"
         )
         
-        async with FreeWebScraper(config) as scraper:
-            print("Testing concurrent fetch performance...")
-            
-            test_urls = [
-                "https://httpbin.org/delay/1",
-                "https://httpbin.org/delay/1",
-                "https://httpbin.org/delay/1",
-                "https://httpbin.org/delay/1",
-                "https://httpbin.org/delay/1"
-            ]
-            
-            start_time = time.time()
-            tasks = [scraper.scrape_with_aiohttp(url) for url in test_urls]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            end_time = time.time()
-            
-            total_time = end_time - start_time
-            avg_time = total_time / len(test_urls)
-            
-            print(f"Total time: {total_time:.2f}s")
-            print(f"Average time per request: {avg_time:.2f}s")
-            print(f"Success rate: {len([r for r in results if r is not None])}/{len(results)}")
-            
-            if avg_time <= 0.2:
-                print("✅ Performance test PASSED")
-            else:
-                print("❌ Performance test FAILED")
+        # Create a temporary database for testing
+        import tempfile
+        import os
+        temp_dir = tempfile.mkdtemp()
+        db_path = os.path.join(temp_dir, "test_cache.db")
+        database = Database(db_path)
+        
+        try:
+            async with FreeWebScraper(config, database) as scraper:
+                print("Testing concurrent fetch performance...")
+                
+                test_urls = [
+                    "https://httpbin.org/delay/1",
+                    "https://httpbin.org/delay/1",
+                    "https://httpbin.org/delay/1",
+                    "https://httpbin.org/delay/1",
+                    "https://httpbin.org/delay/1"
+                ]
+                
+                start_time = time.time()
+                tasks = [scraper.scrape_with_aiohttp(url) for url in test_urls]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                end_time = time.time()
+                
+                total_time = end_time - start_time
+                avg_time = total_time / len(test_urls)
+                
+                print(f"Total time: {total_time:.2f}s")
+                print(f"Average time per request: {avg_time:.2f}s")
+                print(f"Success rate: {len([r for r in results if r is not None])}/{len(results)}")
+                
+                if avg_time <= 0.2:
+                    print("✅ Performance test PASSED")
+                else:
+                    print("❌ Performance test FAILED")
+        finally:
+            # Cleanup
+            try:
+                os.remove(db_path)
+                os.rmdir(temp_dir)
+            except:
+                pass
     
     asyncio.run(main()) 

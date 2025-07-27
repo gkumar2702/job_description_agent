@@ -9,7 +9,8 @@ import asyncio
 import time
 import re
 import logging
-from typing import List, Dict, Optional, Set, Tuple
+import json
+from typing import List, Dict, Optional, Set, Tuple, Any
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 import random
@@ -41,8 +42,9 @@ class ScrapedContent:
 class FreeWebScraper:
     """Free web scraping using multiple methods with aiohttp for async requests."""
     
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, database: Database):
         self.config = config
+        self.database = database
         self.throttler = Throttler(rate_limit=2, period=1)  # 2 requests per second
         self._session: Optional[aiohttp.ClientSession] = None
         self._browser: Optional[Browser] = None
@@ -90,6 +92,56 @@ class FreeWebScraper:
         if self._browser:
             await self._browser.close()
             self._browser = None
+    
+    async def _get_or_fetch(self, url: str) -> Optional[ScrapedContent]:
+        """
+        Get content from cache if available and not expired, otherwise fetch and cache.
+        
+        Args:
+            url: URL to fetch or get from cache
+            
+        Returns:
+            Optional[ScrapedContent]: Scraped content or None if failed
+        """
+        # Check cache first
+        cached_data = self.database.get_cached_content(url)
+        if cached_data:
+            logger.debug(f"Cache hit for URL: {url}")
+            try:
+                # Parse cached content back to ScrapedContent
+                content_data = json.loads(cached_data['content'])
+                return ScrapedContent(
+                    url=content_data['url'],
+                    title=content_data['title'],
+                    content=content_data['content'],
+                    source=content_data['source'],
+                    relevance_score=content_data['relevance_score'],
+                    timestamp=content_data['timestamp']
+                )
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to parse cached content for {url}: {e}")
+                # Continue to fetch if cache parsing fails
+        
+        # Cache miss or invalid cache, fetch content
+        logger.debug(f"Cache miss for URL: {url}")
+        content = await self.scrape_with_aiohttp(url)
+        
+        if content:
+            # Cache the content
+            try:
+                cache_data = {
+                    'url': content.url,
+                    'title': content.title,
+                    'content': content.content,
+                    'source': content.source,
+                    'relevance_score': content.relevance_score,
+                    'timestamp': content.timestamp
+                }
+                self.database.cache_content(url, json.dumps(cache_data))
+            except Exception as e:
+                logger.warning(f"Failed to cache content for {url}: {e}")
+        
+        return content
         
     async def scrape_with_aiohttp(self, url: str) -> Optional[ScrapedContent]:
         """Scrape content using aiohttp (for simple pages)."""
@@ -244,14 +296,14 @@ class KnowledgeMiner:
         all_content = []
         
         # Use async context manager for scraper
-        async with FreeWebScraper(self.config) as scraper:
+        async with FreeWebScraper(self.config, self.database) as scraper:
             # 1. Direct scraping from known sources
             logger.info("Scraping direct sources...")
             direct_content = await self._scrape_direct_sources(jd, scraper)
             all_content.extend(direct_content)
             
             # 2. Limited SerpAPI search (only if we haven't exceeded limits)
-            if self.serpapi_calls < self.max_serpapi_calls and self.config.serpapi_key:
+            if self.serpapi_calls < self.max_serpapi_calls and self.config.SERPAPI_KEY:
                 logger.info("Performing limited SerpAPI search...")
                 serpapi_content = await self._search_with_serpapi(jd, scraper)
                 all_content.extend(serpapi_content)
@@ -282,15 +334,8 @@ class KnowledgeMiner:
         for source_name, urls in self.direct_sources.items():
             for url in urls:
                 try:
-                    # Try different scraping methods
-                    content = None
-                    
-                    # First try aiohttp (fastest)
-                    content = await scraper.scrape_with_aiohttp(url)
-                    
-                    # If that fails, try dynamic scraping
-                    if not content:
-                        content = await scraper.scrape_dynamic(url)
+                    # Use _get_or_fetch for caching
+                    content = await scraper._get_or_fetch(url)
                     
                     if content:
                         content_list.append(content)
@@ -304,7 +349,7 @@ class KnowledgeMiner:
     
     async def _search_with_serpapi(self, jd: JobDescription, scraper: FreeWebScraper) -> List[ScrapedContent]:
         """Limited SerpAPI search."""
-        if not self.config.serpapi_key or self.serpapi_calls >= self.max_serpapi_calls:
+        if not self.config.SERPAPI_KEY or self.serpapi_calls >= self.max_serpapi_calls:
             return []
         
         try:
@@ -319,7 +364,7 @@ class KnowledgeMiner:
                 
                 search = GoogleSearch({
                     "q": query,
-                    "api_key": self.config.serpapi_key,
+                    "api_key": self.config.SERPAPI_KEY,
                     "num": 5  # Limit results
                 })
                 
@@ -330,7 +375,8 @@ class KnowledgeMiner:
                     for result in results["organic_results"][:3]:  # Limit to 3 results per query
                         url = result.get("link")
                         if url:
-                            content = await scraper.scrape_dynamic(url)
+                            # Use _get_or_fetch for caching
+                            content = await scraper._get_or_fetch(url)
                             if content:
                                 content_list.append(content)
             
@@ -389,7 +435,8 @@ class KnowledgeMiner:
                         
                         # Try to scrape README
                         readme_url = f"{repo_url}/blob/main/readme/README.md"
-                        content = await scraper.scrape_with_aiohttp(readme_url)
+                        # Use _get_or_fetch for caching
+                        content = await scraper._get_or_fetch(readme_url)
                         
                         if content:
                             content_list.append(content)
@@ -428,7 +475,8 @@ class KnowledgeMiner:
                         post_data = post['data']
                         post_url = f"https://www.reddit.com{post_data['permalink']}"
                         
-                        content = await scraper.scrape_with_aiohttp(post_url)
+                        # Use _get_or_fetch for caching
+                        content = await scraper._get_or_fetch(post_url)
                         if content:
                             content_list.append(content)
                 
@@ -451,7 +499,8 @@ class KnowledgeMiner:
         
         for url in common_urls:
             try:
-                content = await scraper.scrape_dynamic(url)
+                # Use _get_or_fetch for caching
+                content = await scraper._get_or_fetch(url)
                 if content:
                     content_list.append(content)
                 
@@ -538,4 +587,8 @@ class KnowledgeMiner:
             'calls_made': self.serpapi_calls,
             'max_calls': self.max_serpapi_calls,
             'remaining_calls': max(0, self.max_serpapi_calls - self.serpapi_calls)
-        } 
+        }
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        return self.database.get_cache_stats() 

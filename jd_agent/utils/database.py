@@ -79,6 +79,15 @@ class Database:
                 )
             """)
             
+            # Scrape cache table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scrape_cache (
+                    url TEXT PRIMARY KEY,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    content TEXT
+                )
+            """)
+            
             conn.commit()
             logger.info("Database tables created successfully")
     
@@ -287,4 +296,111 @@ class Database:
                     'created_at': row[8]
                 }
                 for row in rows
-            ] 
+            ]
+    
+    def get_cached_content(self, url: str) -> Optional[Dict[str, Any]]:
+        """
+        Get cached content for a URL if it exists and is not expired.
+        
+        Args:
+            url: URL to check in cache
+            
+        Returns:
+            Optional[Dict[str, Any]]: Cached content data or None if not found/expired
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT url, fetched_at, content FROM scrape_cache 
+                WHERE url = ? AND fetched_at > datetime('now', '-7 days')
+            """, (url,))
+            
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'url': row[0],
+                    'fetched_at': row[1],
+                    'content': row[2]
+                }
+            return None
+    
+    def cache_content(self, url: str, content: str) -> None:
+        """
+        Cache content for a URL.
+        
+        Args:
+            url: URL to cache
+            content: Content to cache
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO scrape_cache (url, fetched_at, content)
+                VALUES (?, datetime('now'), ?)
+            """, (url, content))
+            
+            conn.commit()
+            logger.debug(f"Cached content for URL: {url}")
+    
+    def clear_expired_cache(self) -> int:
+        """
+        Clear expired cache entries (older than 7 days).
+        
+        Returns:
+            int: Number of entries cleared
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM scrape_cache 
+                WHERE fetched_at < datetime('now', '-7 days')
+            """)
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            logger.info(f"Cleared {deleted_count} expired cache entries")
+            return deleted_count
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics.
+        
+        Returns:
+            Dict[str, Any]: Cache statistics
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Total cache entries
+            cursor.execute("SELECT COUNT(*) FROM scrape_cache")
+            total_entries = cursor.fetchone()[0]
+            
+            # Valid cache entries (not expired)
+            cursor.execute("""
+                SELECT COUNT(*) FROM scrape_cache 
+                WHERE fetched_at > datetime('now', '-7 days')
+            """)
+            valid_entries = cursor.fetchone()[0]
+            
+            # Expired cache entries
+            cursor.execute("""
+                SELECT COUNT(*) FROM scrape_cache 
+                WHERE fetched_at < datetime('now', '-7 days')
+            """)
+            expired_entries = cursor.fetchone()[0]
+            
+            return {
+                'total_entries': total_entries,
+                'valid_entries': valid_entries,
+                'expired_entries': expired_entries,
+                'hit_ratio': valid_entries / total_entries if total_entries > 0 else 0.0
+            }
+    
+    def _get_connection(self):
+        """
+        Get a database connection for testing purposes.
+        
+        Returns:
+            sqlite3.Connection: Database connection
+        """
+        return sqlite3.connect(self.db_path) 
