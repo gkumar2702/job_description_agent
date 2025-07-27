@@ -4,6 +4,7 @@ Prompt Engine component for generating interview questions using OpenAI GPT-4o.
 
 import json
 import asyncio
+import time
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from openai import OpenAI
 from openai.types.chat import ChatCompletionChunk
@@ -37,6 +38,19 @@ class PromptEngine:
             char_limit_per_piece=350,
             min_relevance_threshold=0.3
         )
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        Estimate token count for text (rough approximation).
+        
+        Args:
+            text: Text to estimate tokens for
+            
+        Returns:
+            int: Estimated token count
+        """
+        # Rough approximation: 1 token ≈ 4 characters for English text
+        return len(text) // 4
     
     def generate_questions(self, jd: JobDescription, 
                          scraped_content: List[Dict[str, Any]], 
@@ -89,6 +103,9 @@ class PromptEngine:
             logger.error("OpenAI client not available")
             return []
         
+        # Record start time for latency calculation
+        start_time = time.time()
+        
         try:
             # Compress context from scraped content
             compressed_context = self.context_compressor.compress(scraped_content)
@@ -103,6 +120,9 @@ class PromptEngine:
                 f"Context compression: {stats['original_pieces']} -> {stats['compressed_pieces']} pieces, "
                 f"{stats['size_reduction']:.1f}% size reduction, {len(compressed_context.sources_used)} sources"
             )
+            
+            # Calculate input tokens
+            input_tokens = self._estimate_tokens(compressed_context.content)
             
             # Generate questions for each difficulty level in parallel
             tasks = []
@@ -120,6 +140,26 @@ class PromptEngine:
                     logger.error(f"Error generating questions for difficulty: {result}")
                 else:
                     questions.extend(result)
+            
+            # Calculate output tokens and latency
+            output_tokens = sum(self._estimate_tokens(q.get('question', '') + q.get('answer', '')) for q in questions)
+            latency_ms = int((time.time() - start_time) * 1000)
+            
+            # Get temperature from kwargs or config
+            temperature = kwargs.get('temperature', self.config.TEMPERATURE)
+            
+            # Log question generation event
+            logger.info(
+                "question_generation",
+                role=jd.role,
+                company=jd.company,
+                difficulty="mixed",  # We generate for all difficulties
+                tokens_in=input_tokens,
+                tokens_out=output_tokens,
+                latency_ms=latency_ms,
+                num_questions=len(questions),
+                temperature=temperature
+            )
             
             logger.info(f"Generated {len(questions)} questions for {jd.company} - {jd.role}")
             return questions
@@ -142,6 +182,9 @@ class PromptEngine:
         Returns:
             List[Dict[str, Any]]: List of questions for the difficulty level
         """
+        # Record start time for latency calculation
+        start_time = time.time()
+        
         prompt = self._build_prompt(jd, context, difficulty)
         
         try:
@@ -190,6 +233,25 @@ class PromptEngine:
                     'skills': q.get('skills', [])
                 }
                 questions.append(question)
+            
+            # Calculate metrics for this difficulty level
+            input_tokens = self._estimate_tokens(prompt)
+            output_tokens = sum(self._estimate_tokens(q.get('question', '') + q.get('answer', '')) for q in questions)
+            latency_ms = int((time.time() - start_time) * 1000)
+            temperature = kwargs.get('temperature', self.config.TEMPERATURE)
+            
+            # Log difficulty-specific generation event
+            logger.info(
+                "question_generation",
+                role=jd.role,
+                company=jd.company,
+                difficulty=difficulty,
+                tokens_in=input_tokens,
+                tokens_out=output_tokens,
+                latency_ms=latency_ms,
+                num_questions=len(questions),
+                temperature=temperature
+            )
             
             logger.info(f"Generated {len(questions)} {difficulty} questions")
             return questions
@@ -300,16 +362,33 @@ class PromptEngine:
         
         # Execute all enhancements concurrently with rate limiting
         logger.info(f"Starting concurrent enhancement of {len(questions)} questions with max 5 concurrent requests")
+        
+        # Record start time for enhancement latency
+        enhancement_start_time = time.time()
         enhanced_questions = await asyncio.gather(*enhancement_tasks, return_exceptions=True)
         
         # Handle any exceptions that occurred during enhancement
         final_questions = []
+        enhanced_count = 0
         for i, result in enumerate(enhanced_questions):
             if isinstance(result, Exception):
                 logger.error(f"Enhancement failed for question {i}: {result}")
                 final_questions.append(questions[i])  # Return original question
             else:
                 final_questions.append(result)
+                if result.get('enhanced', False):
+                    enhanced_count += 1
+        
+        # Calculate enhancement metrics
+        enhancement_latency_ms = int((time.time() - enhancement_start_time) * 1000)
+        
+        # Log enhancement event
+        logger.info(
+            "question_enhancement",
+            num_questions=len(questions),
+            enhanced_count=enhanced_count,
+            latency_ms=enhancement_latency_ms
+        )
         
         logger.info(f"Completed enhancement of {len(final_questions)} questions")
         return final_questions
