@@ -57,7 +57,7 @@ python setup/setup_gmail_auth.py --test
 - `setup/check_gmail_status.py` - Gmail status checker
 - `setup/fix_oauth_access.py` - OAuth access fixer
 - `README.md` - Updated documentation
-- `ENV_SETUP_GUIDE.md` - Updated setup instructions
+- `readme/ENV_SETUP_GUIDE.md` - Updated setup instructions
 - `.gitignore` - Added credential file exclusions
 
 ### Key Improvements:

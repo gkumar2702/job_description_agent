@@ -48,9 +48,12 @@ def main():
     print("3. Email Collector Test")
     print("4. Email Analysis Test")
     print("5. Full Pipeline Test")
-    print("6. All Tests")
+    print("6. Enhanced Email Collector Test")
+    print("7. Enhanced JDParser Test")
+    print("8. Pipeline Results Check")
+    print("9. All Tests")
     
-    choice = input("\nEnter your choice (1-6): ").strip()
+    choice = input("\nEnter your choice (1-9): ").strip()
     
     if choice == "1":
         success = run_command("pytest jd_agent/tests/ -v", "Running Unit Tests")
@@ -63,6 +66,12 @@ def main():
     elif choice == "5":
         success = run_command("python test/test_full_pipeline.py", "Running Full Pipeline Test")
     elif choice == "6":
+        success = run_command("python test/test_enhanced_email_collector.py", "Running Enhanced Email Collector Test")
+    elif choice == "7":
+        success = run_command("python test/test_enhanced_jd_parser.py", "Running Enhanced JDParser Test")
+    elif choice == "8":
+        success = run_command("python test/check_pipeline_results.py", "Running Pipeline Results Check")
+    elif choice == "9":
         print("\n🔄 Running all tests...")
         
         # Run unit tests
@@ -73,10 +82,14 @@ def main():
         email_success = run_command("python test/test_email_collector.py", "Running Email Collector Test")
         analysis_success = run_command("python test/test_email_details.py", "Running Email Analysis Test")
         pipeline_success = run_command("python test/test_full_pipeline.py", "Running Full Pipeline Test")
+        enhanced_email_success = run_command("python test/test_enhanced_email_collector.py", "Running Enhanced Email Collector Test")
+        enhanced_parser_success = run_command("python test/test_enhanced_jd_parser.py", "Running Enhanced JDParser Test")
+        pipeline_check_success = run_command("python test/check_pipeline_results.py", "Running Pipeline Results Check")
         
-        success = unit_success and func_success and email_success and analysis_success and pipeline_success
+        success = (unit_success and func_success and email_success and analysis_success and 
+                  pipeline_success and enhanced_email_success and enhanced_parser_success and pipeline_check_success)
     else:
-        print("❌ Invalid choice. Please enter a number between 1-6.")
+        print("❌ Invalid choice. Please enter a number between 1-9.")
         sys.exit(1)
     
     if success:

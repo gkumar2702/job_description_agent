@@ -8,7 +8,7 @@ import os
 
 # Read the README file
 def read_readme():
-    with open("README.md", "r", encoding="utf-8") as fh:
+    with open("readme/README.md", "r", encoding="utf-8") as fh:
         return fh.read()
 
 # Read requirements

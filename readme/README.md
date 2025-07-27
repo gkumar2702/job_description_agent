@@ -146,19 +146,30 @@ jd_agent/
 ├── main.py                 # Main entry point
 ├── requirements.txt        # Python dependencies
 ├── env.example            # Environment variables template
-├── README.md              # This file
+├── run_tests.py           # Test runner convenience script
+├── run_setup.py           # Setup runner convenience script
+├── readme/                # Documentation files
+│   ├── README.md          # This file
+│   ├── ENV_SETUP_GUIDE.md # Environment setup guide
+│   ├── GMAIL_AUTH_FIX.md  # Gmail authentication troubleshooting
+│   ├── PIPELINE_RESULTS_GUIDE.md # Pipeline results documentation
+│   └── ENHANCED_JDPARSER_SUMMARY.md # JDParser enhancements summary
 ├── setup/                 # Setup and configuration scripts
 │   ├── __init__.py
 │   ├── setup_gmail_auth.py      # Gmail OAuth setup
 │   ├── check_gmail_status.py    # Gmail connection checker
 │   ├── fix_oauth_access.py      # OAuth access fixer
 │   └── setup_service_account.py # Service account setup
-├── test/                  # Test scripts
+├── test/                  # Test and check scripts
 │   ├── __init__.py
 │   ├── test_demo.py             # Basic functionality test
 │   ├── test_email_collector.py  # Email collector test
 │   ├── test_email_details.py    # Email analysis test
-│   └── test_full_pipeline.py    # Full pipeline test
+│   ├── test_full_pipeline.py    # Full pipeline test
+│   ├── test_enhanced_email_collector.py # Enhanced email collector test
+│   ├── test_enhanced_jd_parser.py # Enhanced JDParser test
+│   ├── check_pipeline_results.py # Pipeline results checker
+│   └── run_pipeline_and_check_results.py # Pipeline runner and checker
 ├── data/                  # Database and output files
 │   ├── jd_agent.db       # SQLite database
 │   └── exports/          # Generated questions
@@ -185,6 +196,7 @@ jd_agent/
 
 ## 🧪 Testing
 
+### Unit Tests
 Run the unit test suite:
 
 ```bash
@@ -197,7 +209,14 @@ Run with coverage:
 pytest jd_agent/tests/ --cov=jd_agent --cov-report=html
 ```
 
-Run functional tests:
+### Functional Tests
+Run functional tests using the convenience script:
+
+```bash
+python run_tests.py
+```
+
+Or run individual tests:
 
 ```bash
 # Test basic functionality
@@ -206,11 +225,43 @@ python test/test_demo.py
 # Test email collector
 python test/test_email_collector.py
 
+# Test enhanced email collector
+python test/test_enhanced_email_collector.py
+
+# Test enhanced JDParser
+python test/test_enhanced_jd_parser.py
+
 # Test full pipeline
 python test/test_full_pipeline.py
 
 # Test email analysis
 python test/test_email_details.py
+
+# Check pipeline results
+python test/check_pipeline_results.py
+
+# Run pipeline and check results
+python test/run_pipeline_and_check_results.py
+```
+
+### Setup and Configuration
+Run setup utilities using the convenience script:
+
+```bash
+python run_setup.py
+```
+
+Or run individual setup scripts:
+
+```bash
+# Gmail authentication setup
+python setup/setup_gmail_auth.py
+
+# Check Gmail status
+python setup/check_gmail_status.py
+
+# Fix OAuth access issues
+python setup/fix_oauth_access.py
 ```
 
 ## 📊 Output Format
@@ -252,6 +303,14 @@ Key configuration options in `.env`:
 - `TEMPERATURE`: Creativity level for question generation (default: 0.7)
 - `LOG_LEVEL`: Logging level (default: INFO)
 
+## 📚 Documentation
+
+- **README.md**: Main documentation (this file)
+- **ENV_SETUP_GUIDE.md**: Detailed environment setup instructions
+- **GMAIL_AUTH_FIX.md**: Gmail authentication troubleshooting guide
+- **PIPELINE_RESULTS_GUIDE.md**: Guide to understanding pipeline results and storage
+- **ENHANCED_JDPARSER_SUMMARY.md**: Summary of JDParser enhancements and improvements
+
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -268,7 +327,7 @@ MIT License - see LICENSE file for details.
 ## 🆘 Support
 
 For issues and questions:
-1. Check the documentation
+1. Check the documentation in the `readme/` folder
 2. Search existing issues
 3. Create a new issue with detailed information
 

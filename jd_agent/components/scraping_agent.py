@@ -179,7 +179,7 @@ class ScrapingAgent:
                         repo_url = repo['html_url']
                         
                         # Try to scrape README
-                        readme_url = f"{repo_url}/blob/main/README.md"
+                        readme_url = f"{repo_url}/blob/main/readme/README.md"
                         content = await self.scraper.scrape_with_requests(readme_url)
                         
                         if content:
