@@ -2,6 +2,13 @@
 Constants used throughout the JD Agent application.
 """
 
+# Scoring weights for relevance calculation
+SIMILARITY_THRESHOLD = 85
+SKILL_WEIGHT = 0.4
+ROLE_WEIGHT = 0.3
+COMPANY_WEIGHT = 0.2
+DIFFICULTY_WEIGHT = 0.1
+
 # Direct URLs for popular sources
 ALLOWED_DIRECT_SOURCES = {
     'GitHub': [
@@ -86,64 +93,59 @@ CREDIBLE_SOURCES = [
     'tutorialspoint',
 ]
 
-# Prompt Engineering Constants
-SYSTEM_PROMPT = "You are an expert technical interviewer and software engineer."
+# System prompt for OpenAI
+SYSTEM_PROMPT = """You are an expert technical interviewer with deep knowledge of software engineering, data science, and related technical fields. Your task is to generate high-quality interview questions that are relevant, challenging, and appropriate for the specified difficulty level.
 
-# Difficulty level descriptions for question generation
+Generate questions that:
+- Are specific and actionable
+- Test both theoretical knowledge and practical skills
+- Are appropriate for the specified difficulty level
+- Cover the key skills and technologies mentioned
+- Include both technical and behavioral aspects where relevant
+
+Provide clear, detailed answers that demonstrate the expected level of knowledge."""
+
+# Difficulty level descriptions
 DIFFICULTY_DESC = {
-    'easy': 'basic concepts, fundamental knowledge, and entry-level topics',
-    'medium': 'intermediate concepts, practical applications, and problem-solving',
-    'hard': 'advanced concepts, system design, complex algorithms, and senior-level topics'
+    'easy': 'Basic concepts, fundamental knowledge, entry-level understanding',
+    'medium': 'Intermediate concepts, practical application, problem-solving skills',
+    'hard': 'Advanced concepts, system design, complex problem-solving, deep expertise'
 }
 
-# Question generation prompt template
-QUESTION_GENERATION_TEMPLATE = """
-You are an expert technical interviewer creating interview questions for a {role} position at {company}.
+# Question generation template
+QUESTION_GENERATION_TEMPLATE = """Generate {num_questions} {difficulty} interview questions for a {role} position at {company}.
 
-Job Description Context:
-- Role: {role}
-- Company: {company}
+Job Requirements:
+- Skills: {skills}
+- Experience: {experience_years} years
 - Location: {location}
-- Experience Required: {experience_years} years
-- Key Skills: {skills}
 
-Difficulty Level: {difficulty_upper}
-Focus on: {difficulty_desc}
-
-Context from existing interview resources:
+Context from research:
 {context}
 
-Generate 5 {difficulty} interview questions that are:
-1. Relevant to the specific role and company
-2. Appropriate for the experience level
-3. Focused on the key skills mentioned
-4. Practical and realistic
-5. Varied in topic (mix of technical, behavioral, and problem-solving)
+Generate questions that are {difficulty_desc}.
 
-For each question, provide:
-- A clear, specific question
-- A comprehensive answer/explanation
-- The relevant skill category
-- Specific skills being tested
+Return the questions in the following JSON format:
+{{
+    "questions": [
+        {{
+            "question": "Question text here?",
+            "answer": "Detailed answer here.",
+            "category": "Technical/Behavioral/System Design",
+            "skills": ["skill1", "skill2"]
+        }}
+    ]
+}}"""
 
-Make sure the questions are tailored to this specific role and company, not generic questions.
-"""
-
-# Question enhancement prompt template
-QUESTION_ENHANCEMENT_TEMPLATE = """
-Enhance this interview question with additional context and examples from the provided content.
+# Question enhancement template
+QUESTION_ENHANCEMENT_TEMPLATE = """Enhance the following interview question with additional context and details from the provided research:
 
 Original Question: {question}
 Original Answer: {answer}
 
-Relevant Context:
-{relevant_content}
+Research Context:
+{context}
 
-Please enhance the answer to be more comprehensive and include:
-1. Real-world examples
-2. Additional context from the provided content
-3. More detailed explanations
-4. Practical tips or best practices
+Provide an enhanced answer that incorporates relevant information from the research while maintaining the original structure and accuracy.
 
-Return only the enhanced answer text, not the question.
-""" 
+Enhanced Answer:""" 

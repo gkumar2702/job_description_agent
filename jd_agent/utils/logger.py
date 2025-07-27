@@ -2,7 +2,7 @@
 Logging configuration for JD Agent.
 """
 
-import structlog  # type: ignore
+import structlog
 import sys
 from typing import Any
 

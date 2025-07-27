@@ -10,12 +10,20 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from collections import defaultdict
 from rapidfuzz import fuzz
-import aiofiles
+import aiofiles  # type: ignore
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 from ..utils.config import Config
 from ..utils.logger import get_logger
 from ..utils.embeddings import compute_similarity
+from ..utils.constants import SIMILARITY_THRESHOLD
+from ..utils.decorators import log_time, log_time_async
+from ..utils.schemas import Question
 from .jd_parser import JobDescription
+from .scoring_strategies import ScoringStrategy, HeuristicScorer
 
 logger = get_logger(__name__)
 
@@ -23,13 +31,22 @@ logger = get_logger(__name__)
 class QuestionBank:
     """Manages and exports interview questions."""
     
-    def __init__(self, config: Optional[Config] = None):
-        """Initialize the question bank."""
-        self.questions = []
+    def __init__(self, config: Optional[Config] = None, scorer: Optional[ScoringStrategy] = None):
+        """
+        Initialize the question bank.
+        
+        Args:
+            config: Configuration object
+            scorer: Scoring strategy to use (defaults to HeuristicScorer)
+        """
+        self.questions: List[Question] = []
         if config is None:
             config = Config()
         self.export_dir = config.get_export_dir()
         os.makedirs(self.export_dir, exist_ok=True)
+        
+        # Use provided scorer or default to HeuristicScorer
+        self.scorer = scorer if scorer is not None else HeuristicScorer()
     
     def add_questions(self, questions: List[Dict[str, Any]]) -> None:
         """
@@ -38,23 +55,36 @@ class QuestionBank:
         Args:
             questions: List of question dictionaries
         """
-        self.questions.extend(questions)
-        logger.info(f"Added {len(questions)} questions to question bank")
+        # Convert dict questions to Question objects
+        question_objects = []
+        for q_dict in questions:
+            try:
+                question_obj = Question(**q_dict)
+                question_objects.append(question_obj)
+            except Exception as e:
+                logger.warning(f"Failed to create Question object: {e}")
+                continue
+        
+        self.questions.extend(question_objects)
+        logger.info("questions_added", count=len(question_objects))
     
-    def deduplicate_questions(self) -> List[Dict[str, Any]]:
+    @log_time("dedup_done")
+    def deduplicate_questions(self) -> List[Question]:
         """
         Remove duplicate questions based on similarity.
         
         Returns:
-            List[Dict[str, Any]]: Deduplicated questions
+            List[Question]: Deduplicated questions
         """
         if not self.questions:
             return []
         
+        before_count = len(self.questions)
+        
         # Group questions by difficulty and category
         grouped_questions = defaultdict(list)
         for question in self.questions:
-            key = (question.get('difficulty', ''), question.get('category', ''))
+            key = (question.difficulty, question.category)
             grouped_questions[key].append(question)
         
         deduplicated = []
@@ -68,11 +98,13 @@ class QuestionBank:
             
             deduplicated.extend(final_questions)
         
-        logger.info(f"Deduplicated {len(self.questions)} questions to {len(deduplicated)}")
+        after_count = len(deduplicated)
+        logger.info("dedup_done", before=before_count, after=after_count)
+        
         self.questions = deduplicated
         return deduplicated
     
-    def _remove_exact_duplicates(self, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _remove_exact_duplicates(self, questions: List[Question]) -> List[Question]:
         """
         Remove exact duplicate questions.
         
@@ -80,14 +112,14 @@ class QuestionBank:
             questions: List of questions
             
         Returns:
-            List[Dict[str, Any]]: Questions without exact duplicates
+            List[Question]: Questions without exact duplicates
         """
         seen_questions = set()
         unique_questions = []
         
         for question in questions:
             # Create a normalized version of the question for comparison
-            normalized = self._normalize_question(question.get('question', ''))
+            normalized = self._normalize_question(question.question)
             
             if normalized not in seen_questions:
                 seen_questions.add(normalized)
@@ -117,8 +149,8 @@ class QuestionBank:
         
         return normalized
     
-    def _remove_similar_questions(self, questions: List[Dict[str, Any]], 
-                                similarity_threshold: int = 85) -> List[Dict[str, Any]]:
+    def _remove_similar_questions(self, questions: List[Question], 
+                                similarity_threshold: int = SIMILARITY_THRESHOLD) -> List[Question]:
         """
         Remove similar questions based on content similarity using rapidfuzz.
         
@@ -127,7 +159,7 @@ class QuestionBank:
             similarity_threshold: Threshold for similarity (0-100)
             
         Returns:
-            List[Dict[str, Any]]: Questions without similar duplicates
+            List[Question]: Questions without similar duplicates
         """
         if len(questions) <= 1:
             return questions
@@ -140,8 +172,8 @@ class QuestionBank:
             
             for j, existing_question in enumerate(unique_questions):
                 similarity = self._calculate_similarity(
-                    question.get('question', ''),
-                    existing_question.get('question', '')
+                    question.question,
+                    existing_question.question
                 )
                 
                 if similarity >= similarity_threshold:
@@ -171,6 +203,7 @@ class QuestionBank:
         # This handles paraphrasing, word order changes, and partial matches
         return fuzz.token_set_ratio(question1, question2)
     
+    @log_time("scoring_done")
     def score_questions(self, jd: JobDescription) -> List[Dict[str, Any]]:
         """
         Score questions based on relevance to job description.
@@ -184,85 +217,16 @@ class QuestionBank:
         scored_questions = []
         
         for question in self.questions:
-            score = self._calculate_relevance_score(question, jd)
-            scored_question = question.copy()
+            score = self.scorer.score(question, jd)
+            scored_question = question.model_dump()
             scored_question['relevance_score'] = score
             scored_questions.append(scored_question)
         
         # Sort by relevance score (highest first)
         scored_questions.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
         
-        logger.info(f"Scored {len(scored_questions)} questions")
+        logger.info("scoring_done", count=len(scored_questions))
         return scored_questions
-    
-    def _calculate_relevance_score(self, question: Dict[str, Any], 
-                                 jd: JobDescription) -> float:
-        """
-        Calculate relevance score for a question using embeddings and traditional logic.
-        
-        Args:
-            question: Question dictionary
-            jd: Job description object
-            
-        Returns:
-            float: Relevance score (0-1)
-        """
-        # Traditional scoring logic (40% weight)
-        traditional_score = 0.0
-        
-        # Check skill relevance
-        question_skills = [skill.lower() for skill in question.get('skills', [])]
-        jd_skills = [skill.lower() for skill in jd.skills]
-        
-        skill_matches = sum(1 for skill in question_skills if skill in jd_skills)
-        if jd_skills:
-            skill_score = skill_matches / len(jd_skills)
-            traditional_score += skill_score * 0.4  # 40% weight for skills
-        
-        # Check role relevance
-        question_text = question.get('question', '').lower()
-        role_keywords = jd.role.lower().split()
-        
-        role_matches = sum(1 for keyword in role_keywords if keyword in question_text)
-        if role_keywords:
-            role_score = role_matches / len(role_keywords)
-            traditional_score += role_score * 0.3  # 30% weight for role
-        
-        # Check company relevance
-        company_keywords = jd.company.lower().split()
-        company_matches = sum(1 for keyword in company_keywords if keyword in question_text)
-        if company_keywords:
-            company_score = company_matches / len(company_keywords)
-            traditional_score += company_score * 0.2  # 20% weight for company
-        
-        # Check experience level relevance
-        difficulty = question.get('difficulty', '').lower()
-        experience_years = jd.experience_years
-        
-        if experience_years <= 2 and difficulty == 'easy':
-            traditional_score += 0.1
-        elif 3 <= experience_years <= 5 and difficulty == 'medium':
-            traditional_score += 0.1
-        elif experience_years > 5 and difficulty == 'hard':
-            traditional_score += 0.1
-        
-        # Embedding-based scoring (60% weight)
-        embed_score = 0.0
-        try:
-            # Create JD context: role + skills
-            jd_context = f"{jd.role} {' '.join(jd.skills)}"
-            question_text = question.get('question', '')
-            
-            # Compute cosine similarity between JD context and question
-            embed_score = compute_similarity(jd_context, question_text)
-        except Exception as e:
-            logger.warning(f"Failed to compute embedding similarity: {e}")
-            embed_score = 0.0
-        
-        # Combine scores: 60% embedding + 40% traditional
-        final_score = (embed_score * 0.6) + (traditional_score * 0.4)
-        
-        return min(final_score, 1.0)  # Cap at 1.0
     
     async def export_questions(self, jd: JobDescription, 
                              questions: List[Dict[str, Any]], 
@@ -273,7 +237,7 @@ class QuestionBank:
         Args:
             jd: Job description object
             questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json')
+            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
             
         Returns:
             Dict[str, str]: Dictionary mapping format to file path
@@ -296,7 +260,7 @@ class QuestionBank:
         Args:
             jd: Job description object
             questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json')
+            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
             
         Returns:
             Dict[str, str]: Dictionary mapping format to file path
@@ -312,13 +276,13 @@ class QuestionBank:
         Args:
             jd: Job description object
             questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json')
+            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
             
         Returns:
             Dict[str, str]: Dictionary mapping format to file path
         """
         if formats is None:
-            formats = ['markdown', 'csv', 'json']
+            formats = ['markdown', 'csv', 'json', 'xlsx']
         
         export_files = {}
         
@@ -336,6 +300,8 @@ class QuestionBank:
                     file_path = await self._export_csv_async(questions, jd, filename_base)
                 elif format_type == 'json':
                     file_path = await self._export_json_async(questions, jd, filename_base)
+                elif format_type == 'xlsx':
+                    file_path = await self._export_xlsx_async(questions, jd, filename_base)
                 else:
                     logger.warning(f"Unknown export format: {format_type}")
                     continue
@@ -357,13 +323,13 @@ class QuestionBank:
         Args:
             jd: Job description object
             questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json')
+            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
             
         Returns:
             Dict[str, str]: Dictionary mapping format to file path
         """
         if formats is None:
-            formats = ['markdown', 'csv', 'json']
+            formats = ['markdown', 'csv', 'json', 'xlsx']
         
         export_files = {}
         
@@ -381,6 +347,8 @@ class QuestionBank:
                     file_path = self._export_csv(questions, jd, filename_base)
                 elif format_type == 'json':
                     file_path = self._export_json(questions, jd, filename_base)
+                elif format_type == 'xlsx':
+                    file_path = self._export_xlsx(questions, jd, filename_base)
                 else:
                     logger.warning(f"Unknown export format: {format_type}")
                     continue
@@ -650,6 +618,127 @@ class QuestionBank:
             await f.write(json.dumps(export_data, indent=2, ensure_ascii=False))
         
         return file_path
+    
+    def _export_xlsx(self, questions: List[Dict[str, Any]], 
+                    jd: JobDescription, filename_base: str) -> str:
+        """
+        Export questions in Excel format with styled headers and auto-filter.
+        
+        Args:
+            questions: List of questions
+            jd: Job description object
+            filename_base: Base filename
+            
+        Returns:
+            str: Path to exported file
+        """
+        file_path = os.path.join(self.export_dir, f"{filename_base}.xlsx")
+        
+        # Create DataFrame
+        df_data = []
+        for question in questions:
+            df_data.append({
+                'Difficulty': question.get('difficulty', ''),
+                'Question': question.get('question', ''),
+                'Answer': question.get('answer', ''),
+                'Category': question.get('category', ''),
+                'Skills': '; '.join(question.get('skills', [])),
+                'Source': question.get('source', ''),
+                'Relevance Score': question.get('relevance_score', ''),
+                'Company': jd.company,
+                'Role': jd.role
+            })
+        
+        df = pd.DataFrame(df_data)
+        
+        # Create Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Interview Questions"
+        
+        # Add metadata sheet
+        metadata_ws = wb.create_sheet("Metadata", 0)
+        metadata_ws['A1'] = "Job Description Metadata"
+        metadata_ws['A3'] = "Company"
+        metadata_ws['B3'] = jd.company
+        metadata_ws['A4'] = "Role"
+        metadata_ws['B4'] = jd.role
+        metadata_ws['A5'] = "Location"
+        metadata_ws['B5'] = jd.location
+        metadata_ws['A6'] = "Experience Required"
+        metadata_ws['B6'] = f"{jd.experience_years} years"
+        metadata_ws['A7'] = "Skills"
+        metadata_ws['B7'] = ', '.join(jd.skills)
+        metadata_ws['A8'] = "Generated At"
+        metadata_ws['B8'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        metadata_ws['A9'] = "Total Questions"
+        metadata_ws['B9'] = len(questions)
+        
+        # Style metadata headers
+        for cell in metadata_ws['A1:A9']:
+            cell[0].font = Font(bold=True)
+        
+        # Write questions data
+        for r in dataframe_to_rows(df, index=False, header=True):
+            ws.append(r)
+        
+        # Style headers
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+        
+        # Auto-filter
+        ws.auto_filter.ref = ws.dimensions
+        
+        # Adjust column widths
+        column_widths = {
+            'A': 15,  # Difficulty
+            'B': 50,  # Question
+            'C': 60,  # Answer
+            'D': 20,  # Category
+            'E': 30,  # Skills
+            'F': 15,  # Source
+            'G': 15,  # Relevance Score
+            'H': 25,  # Company
+            'I': 25   # Role
+        }
+        
+        for col, width in column_widths.items():
+            ws.column_dimensions[col].width = width
+        
+        # Save workbook
+        wb.save(file_path)
+        
+        return file_path
+    
+    async def _export_xlsx_async(self, questions: List[Dict[str, Any]], 
+                               jd: JobDescription, filename_base: str) -> str:
+        """
+        Export questions in Excel format asynchronously.
+        
+        Args:
+            questions: List of questions
+            jd: Job description object
+            filename_base: Base filename
+            
+        Returns:
+            str: Path to exported file
+        """
+        # For Excel, we'll use the sync version since openpyxl doesn't have async support
+        # but we'll run it in a thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, 
+            self._export_xlsx, 
+            questions, 
+            jd, 
+            filename_base
+        )
     
     def get_question_statistics(self) -> Dict[str, Any]:
         """

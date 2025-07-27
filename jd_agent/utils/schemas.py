@@ -6,7 +6,7 @@ and other data formats used throughout the JD Agent application.
 """
 
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Any
 
 
 class Question(BaseModel):
@@ -45,6 +45,10 @@ class JobDescriptionSchema(BaseModel):
     email_id: str = Field(..., description="Associated email ID")
     confidence_score: float = Field(..., ge=0.0, le=1.0, description="Parsing confidence score")
     parsing_metadata: dict = Field(default_factory=dict, description="Metadata about parsing process")
+
+    def model_json_schema(self, **kwargs: Any) -> dict[str, Any]:
+        """Get JSON schema for the model."""
+        return super().model_json_schema(**kwargs)
 
 
 class ScrapedContentSchema(BaseModel):

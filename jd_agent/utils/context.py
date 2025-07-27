@@ -303,7 +303,7 @@ class ContextCompressor:
         
         # Source distribution
         sources = [content.get('source', 'Unknown') for content in original_content]
-        source_distribution = {}
+        source_distribution: Dict[str, int] = {}
         for source in sources:
             source_distribution[source] = source_distribution.get(source, 0) + 1
         
