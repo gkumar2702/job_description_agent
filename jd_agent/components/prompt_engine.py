@@ -10,6 +10,7 @@ from openai.types.chat import ChatCompletionChunk
 
 from ..utils.config import Config
 from ..utils.logger import get_logger
+from ..utils.context import ContextCompressor
 from .jd_parser import JobDescription
 
 logger = get_logger(__name__)
@@ -26,6 +27,13 @@ class PromptEngine:
             self.client = None
         else:
             self.client = OpenAI(api_key=config.OPENAI_API_KEY)
+        
+        # Initialize context compressor
+        self.context_compressor = ContextCompressor(
+            max_tokens=config.MAX_TOKENS - 1000,  # Reserve 1k tokens for prompt
+            char_limit_per_piece=350,
+            min_relevance_threshold=0.3
+        )
     
     def generate_questions(self, jd: JobDescription, 
                          scraped_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -67,13 +75,24 @@ class PromptEngine:
             return []
         
         try:
-            # Prepare context from scraped content
-            context = self._prepare_context(scraped_content)
+            # Compress context from scraped content
+            compressed_context = self.context_compressor.compress(scraped_content)
+            
+            if not compressed_context.content:
+                logger.warning("No relevant content found after compression")
+                return []
+            
+            # Log compression statistics
+            stats = self.context_compressor.get_compression_stats(scraped_content, compressed_context)
+            logger.info(
+                f"Context compression: {stats['original_pieces']} -> {stats['compressed_pieces']} pieces, "
+                f"{stats['size_reduction']:.1f}% size reduction, {len(compressed_context.sources_used)} sources"
+            )
             
             # Generate questions for each difficulty level in parallel
             tasks = []
             for difficulty in ['easy', 'medium', 'hard']:
-                task = self._generate_difficulty_questions_async(jd, context, difficulty)
+                task = self._generate_difficulty_questions_async(jd, compressed_context.content, difficulty)
                 tasks.append(task)
             
             # Wait for all difficulty levels to complete
@@ -94,30 +113,7 @@ class PromptEngine:
             logger.error(f"Error generating questions: {e}")
             return []
     
-    def _prepare_context(self, scraped_content: List[Dict[str, Any]]) -> str:
-        """
-        Prepare context from scraped content.
-        
-        Args:
-            scraped_content: List of scraped content
-            
-        Returns:
-            str: Formatted context
-        """
-        context_parts = []
-        
-        for content in scraped_content[:5]:  # Limit to top 5 sources
-            source = content.get('source', 'Unknown')
-            title = content.get('title', '')
-            snippet = content.get('snippet', '')
-            full_content = content.get('content', '')
-            
-            # Use snippet if available, otherwise use first 500 chars of content
-            text_content = snippet if snippet else full_content[:500]
-            
-            context_parts.append(f"Source: {source}\nTitle: {title}\nContent: {text_content}\n")
-        
-        return "\n".join(context_parts)
+
     
     async def _generate_difficulty_questions_async(self, jd: JobDescription, 
                                                  context: str, difficulty: str) -> List[Dict[str, Any]]:
