@@ -53,11 +53,16 @@ This guide will help you set up your `.env` file with all the necessary API keys
 5. Save the downloaded file as `credentials.json` in the project root directory
 6. Run the authentication setup script:
    ```bash
-   python setup_gmail_auth.py
+   python setup/setup_gmail_auth.py
    ```
 
 **Alternative Manual Setup**:
 If you prefer to set up manually, extract the credentials from the JSON file and add them to your `.env` file.
+
+**Troubleshooting**:
+- If you encounter OAuth access issues, run: `python setup/fix_oauth_access.py`
+- To check Gmail status: `python setup/check_gmail_status.py`
+- For service account setup: `python setup/setup_service_account.py`
 
 **Cost**: Free for personal use
 

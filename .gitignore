@@ -167,6 +167,11 @@ data/
 *.sqlite
 *.sqlite3
 
+# Setup and test folders (keep structure but ignore sensitive files)
+setup/credentials.json
+setup/token.json
+test/*.log
+
 # API keys and sensitive data
 .env
 .env.local

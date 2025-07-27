@@ -41,19 +41,21 @@ Created `setup_gmail_auth.py` that:
 ```bash
 # Save the downloaded file as credentials.json in the project root
 # Then run the setup script
-python setup_gmail_auth.py
+python setup/setup_gmail_auth.py
 ```
 
 ### Step 3: Test Connection
 ```bash
-python setup_gmail_auth.py --test
+python setup/setup_gmail_auth.py --test
 ```
 
 ## 🔧 Technical Details
 
 ### Files Modified:
 - `jd_agent/components/email_collector.py` - Updated authentication logic
-- `setup_gmail_auth.py` - New setup script
+- `setup/setup_gmail_auth.py` - New setup script
+- `setup/check_gmail_status.py` - Gmail status checker
+- `setup/fix_oauth_access.py` - OAuth access fixer
 - `README.md` - Updated documentation
 - `ENV_SETUP_GUIDE.md` - Updated setup instructions
 - `.gitignore` - Added credential file exclusions

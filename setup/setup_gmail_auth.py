@@ -88,8 +88,25 @@ def setup_gmail_auth():
                 print("If the browser doesn't open automatically, copy and paste the URL.")
                 
                 # Run the flow
-                creds = flow.run_local_server(port=0)
-                print("✅ Authentication successful!")
+                try:
+                    creds = flow.run_local_server(port=0)
+                    print("✅ Authentication successful!")
+                except Exception as auth_error:
+                    if "access_denied" in str(auth_error) or "verification" in str(auth_error):
+                        print("❌ Access denied: OAuth app not verified")
+                        print("\n" + "="*60)
+                        print("🔧 QUICK FIX: Add yourself as a test user")
+                        print("="*60)
+                        print("1. Go to https://console.cloud.google.com/")
+                        print("2. Navigate to 'APIs & Services' > 'OAuth consent screen'")
+                        print("3. In 'Test users' section, click 'Add Users'")
+                        print("4. Add your email: kumar.gourav2702@gmail.com")
+                        print("5. Click 'Save'")
+                        print("6. Run this script again: python setup_gmail_auth.py")
+                        print("="*60)
+                        return False
+                    else:
+                        raise auth_error
                 
             except Exception as e:
                 print(f"❌ Authentication failed: {e}")

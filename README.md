@@ -76,7 +76,7 @@ label:"inbox" &&         extract role, skills,     20 results (Glassdoor,
    - Enable Gmail API
    - Create OAuth 2.0 credentials
    - Download credentials JSON file and save as `credentials.json`
-   - Run: `python setup_gmail_auth.py`
+   - Run: `python setup/setup_gmail_auth.py`
 
 ## 🔐 Gmail Authentication Setup
 
@@ -93,12 +93,12 @@ If you want to use Gmail integration to automatically collect job description em
    ```bash
    # Save the downloaded file as credentials.json in the project root
    # Then run the setup script
-   python setup_gmail_auth.py
+   python setup/setup_gmail_auth.py
    ```
 
 3. **Test the connection**:
    ```bash
-   python setup_gmail_auth.py --test
+   python setup/setup_gmail_auth.py --test
    ```
 
 The script will handle the OAuth flow properly on macOS and save your credentials for future use.
@@ -147,6 +147,18 @@ jd_agent/
 ├── requirements.txt        # Python dependencies
 ├── env.example            # Environment variables template
 ├── README.md              # This file
+├── setup/                 # Setup and configuration scripts
+│   ├── __init__.py
+│   ├── setup_gmail_auth.py      # Gmail OAuth setup
+│   ├── check_gmail_status.py    # Gmail connection checker
+│   ├── fix_oauth_access.py      # OAuth access fixer
+│   └── setup_service_account.py # Service account setup
+├── test/                  # Test scripts
+│   ├── __init__.py
+│   ├── test_demo.py             # Basic functionality test
+│   ├── test_email_collector.py  # Email collector test
+│   ├── test_email_details.py    # Email analysis test
+│   └── test_full_pipeline.py    # Full pipeline test
 ├── data/                  # Database and output files
 │   ├── jd_agent.db       # SQLite database
 │   └── exports/          # Generated questions
@@ -173,7 +185,7 @@ jd_agent/
 
 ## 🧪 Testing
 
-Run the test suite:
+Run the unit test suite:
 
 ```bash
 pytest jd_agent/tests/ -v
@@ -183,6 +195,22 @@ Run with coverage:
 
 ```bash
 pytest jd_agent/tests/ --cov=jd_agent --cov-report=html
+```
+
+Run functional tests:
+
+```bash
+# Test basic functionality
+python test/test_demo.py
+
+# Test email collector
+python test/test_email_collector.py
+
+# Test full pipeline
+python test/test_full_pipeline.py
+
+# Test email analysis
+python test/test_email_details.py
 ```
 
 ## 📊 Output Format
