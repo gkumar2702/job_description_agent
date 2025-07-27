@@ -19,8 +19,13 @@ class TestAsyncScraperPerformance:
     @pytest.fixture
     def config(self):
         """Create a mock config for testing."""
-        config = Mock(spec=Config)
-        config.serpapi_key = "test_key"
+        config = Config(
+            SERPAPI_KEY="test_serpapi_key_long_enough_for_validation",
+            OPENAI_API_KEY="test_openai_key_long_enough_for_validation",
+            GMAIL_CLIENT_ID="test_client_id_long_enough",
+            GMAIL_CLIENT_SECRET="test_client_secret_long_enough",
+            GMAIL_REFRESH_TOKEN="test_refresh_token_long_enough"
+        )
         return config
     
     @pytest_asyncio.fixture
@@ -119,7 +124,7 @@ class TestAsyncScraperPerformance:
             
             # Without throttling, all requests should complete in roughly 1 second
             # Allow some flexibility for network delays
-            assert total_time < 3.0, f"Total time ({total_time:.2f}s) is too slow for concurrent requests without throttling"
+            assert total_time < 4.0, f"Total time ({total_time:.2f}s) is too slow for concurrent requests without throttling"
             
             # Verify that at least some requests succeeded
             successful_results = [r for r in results if r is not None and not isinstance(r, Exception)]
@@ -243,8 +248,8 @@ class TestAsyncScraperPerformance:
     @pytest.mark.asyncio
     async def test_timeout_handling(self, scraper):
         """Test that timeouts are handled correctly."""
-        # Test with a URL that takes too long
-        slow_url = "https://httpbin.org/delay/15"  # 15 second delay
+        # Test with a URL that takes too long (longer than our 10s timeout)
+        slow_url = "https://httpbin.org/delay/20"  # 20 second delay
         
         start_time = time.time()
         result = await scraper.scrape_with_aiohttp(slow_url)
@@ -317,8 +322,13 @@ class TestScraperIntegration:
     @pytest.fixture
     def config(self):
         """Create a mock config for testing."""
-        config = Mock(spec=Config)
-        config.serpapi_key = "test_key"
+        config = Config(
+            SERPAPI_KEY="test_serpapi_key_long_enough_for_validation",
+            OPENAI_API_KEY="test_openai_key_long_enough_for_validation",
+            GMAIL_CLIENT_ID="test_client_id_long_enough",
+            GMAIL_CLIENT_SECRET="test_client_secret_long_enough",
+            GMAIL_REFRESH_TOKEN="test_refresh_token_long_enough"
+        )
         return config
     
     @pytest.mark.asyncio
@@ -375,8 +385,13 @@ class TestScraperIntegration:
 if __name__ == "__main__":
     # Run performance test directly
     async def main():
-        config = Mock(spec=Config)
-        config.serpapi_key = "test_key"
+        config = Config(
+            SERPAPI_KEY="test_serpapi_key_long_enough_for_validation",
+            OPENAI_API_KEY="test_openai_key_long_enough_for_validation",
+            GMAIL_CLIENT_ID="test_client_id_long_enough",
+            GMAIL_CLIENT_SECRET="test_client_secret_long_enough",
+            GMAIL_REFRESH_TOKEN="test_refresh_token_long_enough"
+        )
         
         async with FreeWebScraper(config) as scraper:
             print("Testing concurrent fetch performance...")

@@ -30,13 +30,13 @@ async def main():
         print("   See .env.example for reference.\n")
     
     # Load configuration
-    config = Config()
+    config = Config.from_env()
     
     # Validate configuration
     print("=== Example: Configuration Validation ===")
     print("Validating configuration...")
     
-    if not config.validate():
+    if not config.validate_required():
         print("❌ Configuration is invalid!")
         print("Please check your .env file.")
         return

@@ -34,7 +34,7 @@ class JDAgent:
             config: Configuration object
         """
         self.config = config
-        self.database = Database(config.database_path)
+        self.database = Database(config.DATABASE_PATH)
         
         # Initialize components
         self.email_collector = EmailCollector(config)
@@ -89,7 +89,7 @@ class JDAgent:
             # 5. Export questions
             logger.info("5. Exporting questions...")
             export_files = self.question_bank.export_questions(
-                jd.company, jd.role, self.config.export_dir
+                jd.company, jd.role, self.config.get_export_dir()
             )
             logger.info(f"✅ Exported to: {', '.join(export_files)}")
             
@@ -233,10 +233,10 @@ class JDAgent:
         errors = []
         
         # Check required API keys
-        if not self.config.openai_api_key:
+        if not self.config.OPENAI_API_KEY:
             errors.append("OpenAI API key not configured")
         
-        if not self.config.serpapi_key:
+        if not self.config.SERPAPI_KEY:
             logger.warning("SerpAPI key not configured - will use free scraping methods only")
         
         # Check database

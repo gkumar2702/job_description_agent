@@ -21,6 +21,7 @@ from asyncio_throttle import Throttler
 
 from ..utils.config import Config
 from ..utils.database import Database
+from ..utils.constants import ALLOWED_DIRECT_SOURCES, SEARCH_SOURCES, INTERVIEW_KEYWORDS, CREDIBLE_SOURCES
 from .jd_parser import JobDescription
 
 logger = logging.getLogger(__name__)
@@ -230,51 +231,9 @@ class KnowledgeMiner:
         self.serpapi_calls = 0
         self.max_serpapi_calls = 5  # Limit SerpAPI usage
         
-        # Direct URLs for popular sources
-        self.direct_sources = {
-            'GitHub': [
-                'https://github.com/topics/data-science-interview',
-                'https://github.com/topics/machine-learning-interview',
-                'https://github.com/topics/python-interview',
-                'https://github.com/topics/sql-interview',
-            ],
-            'LeetCode': [
-                'https://leetcode.com/problemset/all/',
-                'https://leetcode.com/company/',
-            ],
-            'HackerRank': [
-                'https://www.hackerrank.com/domains',
-                'https://www.hackerrank.com/contests',
-            ],
-            'GeeksforGeeks': [
-                'https://www.geeksforgeeks.org/data-science-interview-questions/',
-                'https://www.geeksforgeeks.org/machine-learning-interview-questions/',
-                'https://www.geeksforgeeks.org/python-interview-questions/',
-            ],
-            'W3Schools': [
-                'https://www.w3schools.com/python/',
-                'https://www.w3schools.com/sql/',
-            ],
-        }
-        
-        # Search sources for SerpAPI (limited usage)
-        self.search_sources = {
-            'GitHub': ['github.com'],
-            'Medium': ['medium.com'],
-            'Reddit': ['reddit.com', 'r/datascience', 'r/learnmachinelearning', 'r/MachineLearning'],
-            'LeetCode': ['leetcode.com'],
-            'HackerRank': ['hackerrank.com'],
-            'StrataScratch': ['stratascratch.com'],
-            'Deep-ML': ['deep-ml.com', 'deepml.com'],
-            'W3Schools': ['w3schools.com'],
-            'GeeksforGeeks': ['geeksforgeeks.org'],
-            'CodeChef': ['codechef.com'],
-            'DataLemur': ['datalemur.com'],
-            'PyChallenger': ['pychallenger.com'],
-            'PyNative': ['pynative.com'],
-            'Kaggle': ['kaggle.com'],
-            'HackerEarth': ['hackerearth.com'],
-        }
+        # Use constants from utils.constants
+        self.direct_sources = ALLOWED_DIRECT_SOURCES
+        self.search_sources = SEARCH_SOURCES
     
     async def mine_knowledge(self, jd: JobDescription) -> List[ScrapedContent]:
         """
@@ -562,14 +521,12 @@ class KnowledgeMiner:
                 score += 0.2
         
         # Interview-related keywords
-        interview_keywords = ['interview', 'question', 'technical', 'coding', 'problem', 'solution']
-        for keyword in interview_keywords:
+        for keyword in INTERVIEW_KEYWORDS:
             if keyword in text:
                 score += 0.1
         
         # Source credibility
-        credible_sources = ['github', 'leetcode', 'hackerrank', 'geeksforgeeks', 'medium']
-        for source in credible_sources:
+        for source in CREDIBLE_SOURCES:
             if source in content.source.lower():
                 score += 0.1
         
