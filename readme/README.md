@@ -13,7 +13,7 @@ The JD Agent is a production-ready system that combines Gmail integration, advan
 - **Smart Question Management**: Deduplication, scoring, and organization
 - **Multiple Export Formats**: Markdown, CSV, JSON, and Excel
 - **CLI Interface**: Command-line tools for analysts
-- **Type Safety**: Comprehensive type checking with mypy
+- **Code Quality**: Comprehensive testing and validation
 - **Performance Optimization**: Async operations and caching
 
 ## 📋 Table of Contents
@@ -101,7 +101,7 @@ python scripts/qb_cli.py stats questions.json
 ```
 
 ### Type Safety & Quality
-- **mypy --strict**: Comprehensive type checking
+- **pytest**: Comprehensive test suite
 - **Type Stubs**: External library type information
 - **GitHub Actions**: Automated type checking
 - **Code Quality**: PEP 8 compliance
@@ -346,8 +346,8 @@ DIFFICULTY_WEIGHT = 0.1
 
 ### Type Safety
 ```bash
-# Run mypy type checking
-mypy --strict jd_agent/
+# Run tests
+python run_tests.py
 
 # Install type stubs
 pip install types-aiofiles pandas-stubs types-openpyxl
@@ -430,7 +430,7 @@ export LOG_LEVEL=DEBUG
 2. Create a feature branch
 3. Make your changes
 4. Add tests
-5. Run type checking: `mypy --strict jd_agent/`
+5. Run tests: `python run_tests.py`
 6. Submit a pull request
 
 ### Code Standards

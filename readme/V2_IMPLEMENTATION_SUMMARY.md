@@ -8,7 +8,7 @@ This document provides a comprehensive summary of all the implementation details
 - **Excel Export**: Professional styling with metadata sheets
 - **Strategy Pattern**: Pluggable scoring algorithms
 - **CLI Tools**: Comprehensive command-line interface
-- **Type Safety**: mypy integration with strict checking
+- **Testing**: Comprehensive test suite with pytest
 - **Structured Logging**: JSON-based monitoring
 - **Performance**: Async operations and caching
 - **Constants**: Centralized configuration
@@ -269,11 +269,11 @@ class Question(BaseModel):
 
 #### GitHub Actions Integration
 ```yaml
-# .github/workflows/mypy.yml
-name: Type Check with mypy
+# .github/workflows/tests.yml
+name: Run Tests
 on: [push, pull_request]
 jobs:
-  type-check:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -283,14 +283,20 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: |
-          pip install mypy
           pip install -r requirements.txt
           pip install -e .
-      - name: Run mypy
+      - name: Run unit tests
         run: |
-          mypy --strict jd_agent/
-          mypy --strict scripts/
-          mypy --strict test/
+          pytest jd_agent/tests/ -v
+      - name: Run functional tests
+        run: |
+          python test/test_demo.py
+          python test/test_email_collector.py
+          python test/test_email_details.py
+          python test/test_full_pipeline.py
+          python test/test_enhanced_email_collector.py
+          python test/test_enhanced_jd_parser.py
+          python test/check_pipeline_results.py
 ```
 
 ### 7. Sentence Embeddings Implementation

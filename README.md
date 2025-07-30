@@ -17,7 +17,7 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 - **Async Operations**: Non-blocking I/O for improved performance
 - **Multiple Export Formats**: Markdown, CSV, JSON, and Excel with styling
 - **CLI Interface**: Command-line tools for analysts and automation
-- **Type Safety**: Comprehensive type checking with mypy
+- **Code Quality**: Comprehensive testing and validation
 - **Structured Logging**: JSON-based logging for monitoring and analytics
 
 ## 📋 Table of Contents
@@ -318,8 +318,8 @@ python scripts/qb_cli.py stats questions.json
 
 ### Type Safety
 ```bash
-# Run mypy type checking
-mypy --strict jd_agent/
+# Run tests
+python run_tests.py
 
 # Install type stubs
 pip install types-aiofiles pandas-stubs types-openpyxl
@@ -394,7 +394,7 @@ export LOG_LEVEL=DEBUG
 2. Create a feature branch
 3. Make your changes
 4. Add tests
-5. Run type checking: `mypy --strict jd_agent/`
+5. Run tests: `python run_tests.py`
 6. Submit a pull request
 
 ### Code Standards

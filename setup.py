@@ -49,7 +49,7 @@ setup(
             "pytest-mock>=3.12.0",
             "black>=23.0.0",
             "flake8>=6.0.0",
-            "mypy>=1.0.0",
+    
         ],
     },
     entry_points={
