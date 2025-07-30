@@ -319,7 +319,7 @@ python scripts/qb_cli.py stats questions.json
 ### Type Safety
 ```bash
 # Run tests
-python run_tests.py
+python test/run_tests.py
 
 # Install type stubs
 pip install types-aiofiles pandas-stubs types-openpyxl
@@ -394,7 +394,7 @@ export LOG_LEVEL=DEBUG
 2. Create a feature branch
 3. Make your changes
 4. Add tests
-5. Run tests: `python run_tests.py`
+5. Run tests: `python test/run_tests.py`
 6. Submit a pull request
 
 ### Code Standards

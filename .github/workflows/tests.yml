@@ -49,4 +49,11 @@ jobs:
         python test/test_schemas.py
         python test/test_context_compressor.py
         python test/test_prompt_engine_async.py
-        python test/test_new_features.py 
+        python test/test_new_features.py
+    
+    - name: Run example and utility scripts
+      run: |
+        python test/example.py
+        python test/example_structured_logging.py
+        python test/run_tests.py
+        python test/run_setup.py 

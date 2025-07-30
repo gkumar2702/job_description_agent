@@ -290,13 +290,17 @@ jobs:
           pytest jd_agent/tests/ -v
       - name: Run functional tests
         run: |
-          python test/test_demo.py
-          python test/test_email_collector.py
-          python test/test_email_details.py
-          python test/test_full_pipeline.py
-          python test/test_enhanced_email_collector.py
-          python test/test_enhanced_jd_parser.py
-          python test/check_pipeline_results.py
+                  python test/test_demo.py
+        python test/test_email_collector.py
+        python test/test_email_details.py
+        python test/test_full_pipeline.py
+        python test/test_enhanced_email_collector.py
+        python test/test_enhanced_jd_parser.py
+        python test/check_pipeline_results.py
+        python test/example.py
+        python test/example_structured_logging.py
+        python test/run_tests.py
+        python test/run_setup.py
 ```
 
 ### 7. Sentence Embeddings Implementation
