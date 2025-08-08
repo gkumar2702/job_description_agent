@@ -514,4 +514,21 @@ class KnowledgeMiner:
         }
 
     def get_cache_stats(self) -> dict[str, Any]:
-        return self.database.get_cache_stats() 
+        return self.database.get_cache_stats()
+    
+    def get_usage_stats(self) -> dict[str, Any]:
+        """Get comprehensive usage statistics."""
+        serpapi_usage = self.get_serpapi_usage()
+        cache_stats = self.get_cache_stats()
+        
+        return {
+            'serpapi_calls': serpapi_usage.get('calls_made', 0),
+            'max_serpapi_calls': serpapi_usage.get('max_calls', 100),
+            'scraping_methods': ['aiohttp', 'playwright', 'serpapi', 'github', 'reddit'],
+            'rate_limiting': serpapi_usage.get('calls_made', 0) >= serpapi_usage.get('max_calls', 100),
+            'total_requests': cache_stats.get('total_requests', 0),
+            'successful_requests': cache_stats.get('successful_requests', 0),
+            'failed_requests': cache_stats.get('failed_requests', 0),
+            'cache_hits': cache_stats.get('cache_hits', 0),
+            'cache_misses': cache_stats.get('cache_misses', 0)
+        } 

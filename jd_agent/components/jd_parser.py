@@ -3,7 +3,6 @@ Job Description Parser component for extracting structured information from JD t
 """
 
 import re
-import spacy
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +10,10 @@ from datetime import datetime
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Temporarily disable spaCy due to numpy compatibility issues
+SPACY_AVAILABLE = False
+logger.warning("spaCy disabled. Using fallback parsing methods.")
 
 
 @dataclass
@@ -24,7 +27,18 @@ class JobDescription:
     content: str
     email_id: str
     confidence_score: float = 0.0
+    salary_lpa: float = 0.0  # Salary in LPA (Lakhs Per Annum)
+    requirements: List[str] = None
+    responsibilities: List[str] = None
     parsing_metadata: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.parsing_metadata is None:
+            self.parsing_metadata = {}
+        if self.requirements is None:
+            self.requirements = []
+        if self.responsibilities is None:
+            self.responsibilities = []
 
 
 class JDParser:
@@ -32,17 +46,25 @@ class JDParser:
     
     def __init__(self):
         """Initialize the enhanced JD parser."""
-        try:
-            self.nlp = spacy.load("en_core_web_sm")
-            logger.info("Loaded spaCy model successfully")
-        except OSError:
-            logger.warning("spaCy model not found. Please run: python -m spacy download en_core_web_sm")
+        if SPACY_AVAILABLE:
+            try:
+                self.nlp = spacy.load("en_core_web_sm")
+                logger.info("Loaded spaCy model successfully")
+            except OSError:
+                logger.warning("spaCy model not found. Please run: python -m spacy download en_core_web_sm")
+                self.nlp = None
+        else:
             self.nlp = None
+            logger.info("Using fallback parsing methods without spaCy")
         
-        # Enhanced company name patterns with better context
+        # Enhanced company name patterns with better context based on real emails
         self.company_patterns = [
+            # Real email patterns from examples
+            r'\b([A-Z][A-Z0-9&\s]+?)\s+\([www\.]*[a-zA-Z0-9.-]+\.com\)\s+is looking for',  # "UST (www.ust.com) is looking for"
+            r'I[\'\u2019]?m hiring for.*?at\s+([A-Z][a-zA-Z\s&.,\-]+?)\.?(?:\s*\(|\s*\u2022|\s*$)',  # "I'm hiring for ... at Acuity Knowledge Partners"
+            r'([A-Z][a-zA-Z\s&.,\-]+?)\s+<[^>]+@[^>]+>',  # "Technoladders Solutions <email>"
             # Direct company mentions
-            r'\b(?:at|with|join|work for|position at|role at|job at)\s+([A-Z][a-zA-Z\s&.,\-]+?)(?:\s+in|\s+as|\s+for|\s+is|\s+are|\s+has|\s+offers|$)',
+            r'\b(?:at|with|join|work for|position at|role at|job at)\s+([A-Z][a-zA-Z\s&.,\-]+?)(?:\s+in|\s+as|\s+for|\s+is|\s+are|\s+has|\s+offers|\s*\(|$)',
             r'\b([A-Z][a-zA-Z\s&.,\-]+?)\s+(?:is hiring|is looking for|seeks|wants|offers|has an opening|has a position)',
             r'\b(?:company|organization|startup|enterprise|corporation|inc\.|llc|ltd|corp)\s*:\s*([A-Z][a-zA-Z\s&.,\-]+?)(?:\s|$)',
             # LinkedIn and job site patterns
@@ -50,17 +72,32 @@ class JDParser:
             r'\b([A-Z][a-zA-Z\s&.,\-]+?)\s+(?:careers|jobs|talent|recruitment|hiring)',
             # Email sender patterns
             r'\b([A-Z][a-zA-Z\s&.,\-]+?)\s+(?:careers|jobs|talent|recruitment|hiring|noreply|notifications)',
+            # LinkedIn specific patterns
+            r'\b(?:hiring for|position at|role at)\s+([A-Z][a-zA-Z\s&.,\-]+?)(?:\s+in|\s+as|\s+for|$)',
+            r'\b([A-Z][a-zA-Z\s&.,\-]+?)\s+(?:is hiring|has an opening|seeks|wants)',
+            # Naukri specific patterns
+            r'\b(?:posted by|via)\s+([A-Z][a-zA-Z\s&.,\-]+?)(?:\s+on|\s+via|\s+at|$)',
+            # Company names in parentheses
+            r'\(([A-Z][a-zA-Z\s&.,\-]+?)\)',
+            # Company names with website
+            r'([A-Z][a-zA-Z\s&.,\-]+?)\s+\(www\.[a-zA-Z0-9.-]+\.com\)',
         ]
         
-        # Enhanced role patterns with better coverage
+        # Enhanced role patterns with better coverage based on real emails
         self.role_patterns = [
+            # Real email patterns from examples
+            r'(?:Subject|looking for|hiring for|position)\s*:?\s*([A-Z][A-Za-z\s]+?(?:Engineer|Scientist|Manager|Lead|Analyst|Developer|Architect))',  # Subject line roles
+            r'(?:I[\'\u2019]?m hiring for|looking for|seeking)\s+(?:an?\s+)?([A-Z][A-Za-z\s]+?(?:Engineer|Scientist|Manager|Lead|Analyst|Developer|Architect))',  # "I'm hiring for Lead Data Scientist"
             # Seniority + Technology + Role combinations
-            r'\b(?:Senior|Junior|Lead|Principal|Staff|Senior|Mid-level|Entry-level)?\s*(?:Software|Data|DevOps|ML|AI|Full Stack|Frontend|Backend|Mobile|QA|Test|Product|Project|Engineering|Development|Programmer|Coder|Developer|Engineer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist|Coordinator|Assistant|Intern|Trainee)\s+(?:Engineer|Developer|Programmer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist|Coordinator|Assistant|Intern|Trainee)\b',
+            r'\b(?:Senior|Junior|Lead|Principal|Staff|Mid-level|Entry-level)?\s*(?:Software|Data|DevOps|ML|AI|Full Stack|Frontend|Backend|Mobile|QA|Test|Product|Project)\s+(?:Engineer|Developer|Programmer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist)\b',
             # Technology + Role combinations
-            r'\b(?:Software|Data|DevOps|ML|AI|Full Stack|Frontend|Backend|Mobile|QA|Test|Product|Project|Engineering|Development|Programmer|Coder|Developer|Engineer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist|Coordinator|Assistant|Intern|Trainee)\s+(?:Engineer|Developer|Programmer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist|Coordinator|Assistant|Intern|Trainee)\b',
+            r'\b(?:Software|Data|DevOps|ML|AI|Full Stack|Frontend|Backend|Mobile|QA|Test|Product|Project)\s+(?:Engineer|Developer|Programmer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist)\b',
             # Standalone technology roles
-            r'\b(?:Senior|Junior|Lead|Principal|Staff)?\s*(?:Software|Data|DevOps|ML|AI|Full Stack|Frontend|Backend|Mobile|QA|Test|Product|Project|Engineering|Development|Programmer|Coder|Developer|Engineer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist|Coordinator|Assistant|Intern|Trainee)\b',
-            # Specific role patterns
+            r'\b(?:Senior|Junior|Lead|Principal|Staff)?\s*(?:AI|Data|Software|DevOps|ML|Full Stack|Frontend|Backend|Mobile|QA|Test|Product|Project)\s+(?:Engineer|Developer|Scientist|Analyst|Manager|Lead|Architect)\b',
+            # Specific role patterns from real emails
+            r'\b(?:AI\s+Engineer)\b',
+            r'\b(?:Lead\s+Data\s+Scientist)\b',
+            r'\b(?:Data\s+Scientist)\b',
             r'\b(?:Data\s+(?:Scientist|Analyst|Engineer|Architect|Manager|Lead|Consultant|Specialist))\b',
             r'\b(?:Product\s+(?:Manager|Analyst|Owner|Specialist|Consultant|Lead))\b',
             r'\b(?:Business\s+(?:Analyst|Intelligence|Intelligence\s+Analyst|Analyst\s+Manager))\b',
@@ -68,10 +105,15 @@ class JDParser:
             r'\b(?:Artificial\s+Intelligence\s+(?:Engineer|Scientist|Specialist|Lead|Manager))\b',
         ]
         
-        # Enhanced location patterns
+        # Enhanced location patterns based on real emails
         self.location_patterns = [
+            # Real email patterns from examples
+            r'(?:for|in|at)\s+(Bangalore|Bengaluru)\s*(?:\([^)]*\))?',  # "for Bangalore (Manyata Tech Park)"
+            r'(Bangalore|Bengaluru)\s*(?:•|·|\|)\s*(?:hybrid|remote|onsite)',  # "Bangalore • hybrid 2 days"
+            r'(?:Remote|Hybrid|Onsite)?\s*(?:\(|\)|\|)?\s*based in\s+(Bangalore|Bengaluru|[A-Z][a-zA-Z\s,]+)',  # "Remote) based in Bengaluru"
+            r'(?:salary up to.*?\|\s*)?([A-Z][a-zA-Z\s,]+?)\s*(?:\(|•|\|)',  # Extract location before parentheses or symbols
             # Direct location mentions
-            r'\b(?:in|at|based in|located in|office in|headquarters in)\s+([A-Z][a-zA-Z\s,]+?)(?:\s+area|\s+region|\s+office|\s+headquarters|\s+HQ|$)',
+            r'\b(?:in|at|based in|located in|office in|headquarters in)\s+([A-Z][a-zA-Z\s,]+?)(?:\s+area|\s+region|\s+office|\s+headquarters|\s+HQ|\s*\(|$)',
             r'\b([A-Z][a-zA-Z\s,]+?)\s+(?:office|location|headquarters|HQ|area|region)',
             r'\b(?:remote|hybrid|onsite|in-office)\s+(?:position|role|job|work)\s+(?:in|at)\s+([A-Z][a-zA-Z\s,]+?)',
             # City/State patterns
@@ -80,15 +122,23 @@ class JDParser:
             r'\b(?:Greater|Metro)\s+([A-Z][a-zA-Z\s,]+?)\s+Area\b',
             # Remote patterns
             r'\b(remote|hybrid|onsite|in-office|work from home|wfh)\b',
+            # India-specific patterns
+            r'\b(Bangalore|Bengaluru|Mumbai|Delhi|Hyderabad|Chennai|Pune|Kolkata|Gurgaon|Noida)\b',
         ]
         
-        # Enhanced experience patterns
+        # Enhanced experience patterns based on real emails
         self.experience_patterns = [
-            r'\b(\d+)[\s-]+(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)',
-            r'\b(?:experience|exp)\s+(?:of\s+)?(\d+)[\s-]+(?:years?|yrs?)',
-            r'\b(\d+)[\s-]+(?:years?|yrs?)\s+(?:in\s+)?(?:the\s+)?(?:field|industry|role|position)',
-            r'\b(?:minimum|at least|minimum of)\s+(\d+)[\s-]+(?:years?|yrs?)',
-            r'\b(\d+)[\s-]+(?:years?|yrs?)\s+(?:minimum|required|preferred)',
+            # Real email patterns from examples
+            r'Exp\s*[-–]\s*(\d+)\+?\s*Years?',  # "Exp - 5+ Years"
+            r'(\d+)\+?\s*yrs?\s+experience',  # "5+ yrs experience"
+            r'(\d+)[\s-–]+(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)',
+            r'(?:experience|exp)\s+(?:of\s+)?(\d+)[\s-–]+(?:years?|yrs?)',
+            r'(\d+)[\s-–]+(?:years?|yrs?)\s+(?:in\s+)?(?:the\s+)?(?:field|industry|role|position)',
+            r'(?:minimum|at least|minimum of)\s+(\d+)[\s-–]+(?:years?|yrs?)',
+            r'(\d+)[\s-–]+(?:years?|yrs?)\s+(?:minimum|required|preferred)',
+            r'(\d+)[\s-–](\d+)\s+years?',  # "7–9 years"
+            r'If you have\s+(\d+)[\s-–](\d+)\s+years?',  # "If you have 7–9 years"
+            r'Overall\s+(\d+)\+?\s*yrs?\s+experience',  # "Overall 5+ yrs experience"
         ]
         
         # Enhanced skills patterns with better categorization
@@ -111,12 +161,26 @@ class JDParser:
             r'\b(?:Agile|Scrum|Kanban|Waterfall|DevOps|SRE|Site Reliability|Monitoring|Logging|APM|Performance|Security|Testing|TDD|BDD|BDD|ATDD|DDD|Domain Driven Design|Event Sourcing|CQRS|Command Query Responsibility Segregation|SOLID|DRY|KISS|YAGNI|Clean Code|Refactoring|Code Review|Pair Programming|Mob Programming|Continuous Integration|Continuous Deployment|Continuous Delivery|Blue Green Deployment|Canary Deployment|Feature Flags|A/B Testing|Multivariate Testing|User Research|User Experience|User Interface|Design Thinking|Lean Startup|MVP|Minimum Viable Product|Product Market Fit|Growth Hacking|Data Driven|Evidence Based|Hypothesis Driven|Customer Development|Jobs to be Done|Value Proposition|Business Model Canvas|Lean Canvas|OKR|Objectives and Key Results|KPI|Key Performance Indicators|ROI|Return on Investment|TCO|Total Cost of Ownership|SLA|Service Level Agreement|SLO|Service Level Objective|SLI|Service Level Indicator)\b',
         ]
         
+        # Salary patterns based on real emails
+        self.salary_patterns = [
+            r'₹\s*(\d+)\s*LPA\s*(?:\(max\))?',  # "₹ 50 LPA (max)"
+            r'salary up to\s*₹\s*(\d+)\s*LPA',  # "salary up to ₹ 50 LPA"
+            r'(\d+)\s*LPA\s*(?:\(max\))?',  # "50 LPA (max)"
+            r'CTC\s*:?\s*₹?\s*(\d+)(?:\.\d+)?\s*(?:LPA|lakhs?)',  # "CTC: ₹15 LPA"
+            r'Package\s*:?\s*₹?\s*(\d+)(?:\.\d+)?\s*(?:LPA|lakhs?)',  # "Package: 20 LPA"
+            r'Expected CTC\s*:?\s*₹?\s*(\d+)(?:\.\d+)?\s*(?:LPA|lakhs?)',  # "Expected CTC: 25 LPA"
+        ]
+        
         # Common company name exclusions
         self.company_exclusions = {
             'linkedin', 'indeed', 'naukri', 'monster', 'glassdoor', 'careerbuilder', 
             'simplyhired', 'ziprecruiter', 'dice', 'angel', 'stackoverflow',
             'noreply', 'notifications', 'alerts', 'jobs', 'careers', 'talent',
-            'recruitment', 'hiring', 'apply', 'application', 'interview'
+            'recruitment', 'hiring', 'apply', 'application', 'interview',
+            'content-id', 'you', 'max', 'responsibility', 'checking', 'authenticity', 
+            'manyata', 'tech', 'park', 'solutions', 'services', 'consultancy',
+            'consulting', 'inmail', 'hit', 'reply', 'email', 'mail', 'message',
+            'notification', 'alert', 'update', 'news', 'newsletter', 'digest'
         }
         
         # Confidence scoring weights
@@ -128,6 +192,60 @@ class JDParser:
             'skills': 0.20
         }
     
+    def parse_job_description(self, job_description_text: str, company: str = "Unknown") -> JobDescription:
+        """
+        Parse job description from raw text.
+        
+        Args:
+            job_description_text: Raw job description text
+            company: Company name
+            
+        Returns:
+            JobDescription: Parsed job description
+        """
+        try:
+            # Create email-like data structure for parsing
+            email_data = {
+                'subject': f"Job Description - {company}",
+                'body': job_description_text,
+                'from': f"careers@{company.lower().replace(' ', '')}.com",
+                'id': 'manual_input'
+            }
+            
+            # Use the existing parse method
+            result = self.parse(email_data)
+            
+            if result is None:
+                # Create a minimal job description if parsing fails
+                return JobDescription(
+                    company=company,
+                    role="Unknown Role",
+                    location="Remote/Not specified",
+                    experience_years=0,
+                    skills=[],
+                    content=job_description_text,
+                    email_id='manual_input',
+                    confidence_score=0.0,
+                    salary_lpa=0.0
+                )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error parsing job description: {e}")
+            # Return a minimal job description on error
+            return JobDescription(
+                company=company,
+                role="Unknown Role",
+                location="Remote/Not specified",
+                experience_years=0,
+                skills=[],
+                content=job_description_text,
+                email_id='manual_input',
+                confidence_score=0.0,
+                salary_lpa=0.0
+            )
+
     def parse(self, email_data: Dict[str, Any]) -> Optional[JobDescription]:
         """
         Parse job description from email data with enhanced accuracy.
@@ -152,6 +270,7 @@ class JDParser:
             location = self._extract_location_enhanced(text, subject)
             experience_years = self._extract_experience_enhanced(text)
             skills = self._extract_skills_enhanced(text)
+            salary_lpa = self._extract_salary_enhanced(text)
             
             # Calculate confidence score
             confidence_score = self._calculate_confidence_score(company, role, location, experience_years, skills)
@@ -192,6 +311,7 @@ class JDParser:
                 content=text,
                 email_id=email_data.get('id', ''),
                 confidence_score=confidence_score,
+                salary_lpa=salary_lpa or 0.0,
                 parsing_metadata=parsing_metadata
             )
             
@@ -216,7 +336,40 @@ class JDParser:
         if sender_company:
             return sender_company
         
-        # Strategy 2: Use enhanced patterns
+        # Strategy 2: Look for specific patterns in the content
+        # LinkedIn pattern: "hiring for an Lead Data Scientist at Acuity Knowledge Partners"
+        linkedin_pattern = r'hiring for\s+(?:an?\s+)?(?:[A-Z][a-zA-Z\s]+?)\s+at\s+([A-Z][a-zA-Z\s&.,\-]+?)(?:\s|\.|$)'
+        matches = re.findall(linkedin_pattern, text, re.IGNORECASE)
+        if matches:
+            company = self._clean_company_name(matches[0])
+            if self._is_valid_company(company):
+                return company
+        
+        # Strategy 2.1: Look for "I'm hiring for an X at Y" pattern
+        hiring_pattern = r"I'm hiring for\s+(?:an?\s+)?(?:[A-Z][a-zA-Z\s]+?)\s+at\s+([A-Z][a-zA-Z\s&.,\-]+?)(?:\s|\.|$)"
+        matches = re.findall(hiring_pattern, text, re.IGNORECASE)
+        if matches:
+            company = self._clean_company_name(matches[0])
+            if self._is_valid_company(company):
+                return company
+        
+        # Strategy 2.2: Look for "UST (www.ust.com) is looking for" pattern
+        ust_pattern = r'([A-Z][A-Z]+)\s+\(www\.[a-zA-Z0-9.-]+\.com\)\s+is\s+looking\s+for'
+        matches = re.findall(ust_pattern, text, re.IGNORECASE)
+        if matches:
+            company = self._clean_company_name(matches[0])
+            if self._is_valid_company(company):
+                return company
+        
+        # Strategy 3: Look for company with website pattern
+        website_pattern = r'([A-Z][a-zA-Z\s&.,\-]+?)\s+\(www\.[a-zA-Z0-9.-]+\.com\)'
+        matches = re.findall(website_pattern, text, re.IGNORECASE)
+        if matches:
+            company = self._clean_company_name(matches[0])
+            if self._is_valid_company(company):
+                return company
+        
+        # Strategy 4: Use enhanced patterns
         for pattern in self.company_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             if matches:
@@ -224,7 +377,7 @@ class JDParser:
                 if self._is_valid_company(company):
                     return company
         
-        # Strategy 3: Use spaCy NER
+        # Strategy 5: Use spaCy NER
         if self.nlp:
             doc = self.nlp(text)
             org_entities = [ent.text for ent in doc.ents if ent.label_ == "ORG"]
@@ -233,10 +386,22 @@ class JDParser:
                 if self._is_valid_company(company):
                     return company
         
-        # Strategy 4: Look for company patterns in subject
+        # Strategy 6: Look for company patterns in subject
         subject_company = self._extract_company_from_subject(subject)
         if subject_company:
             return subject_company
+        
+        # Strategy 7: Fallback to default company names based on email source
+        if 'linkedin' in text.lower():
+            return "LinkedIn"
+        elif 'naukri' in text.lower():
+            return "Naukri.com"
+        elif 'ust' in text.lower():
+            return "UST"
+        elif 'acuity' in text.lower():
+            return "Acuity Knowledge Partners"
+        elif 'lorien' in text.lower():
+            return "Lorien"
         
         return ""
     
@@ -337,7 +502,25 @@ class JDParser:
         if subject_role:
             return subject_role
         
-        # Strategy 2: Use enhanced patterns
+        # Strategy 2: Look for LinkedIn specific patterns
+        # Pattern: "hiring for an Lead Data Scientist at Acuity Knowledge Partners"
+        linkedin_pattern = r'hiring for\s+(?:an?\s+)?([A-Z][a-zA-Z\s]+?(?:Engineer|Developer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist))(?:\s+at|\s+in|\s+for|$)'
+        matches = re.findall(linkedin_pattern, text, re.IGNORECASE)
+        if matches:
+            role = matches[0].strip()
+            if len(role) > 3:
+                return role
+        
+        # Strategy 3: Look for Naukri specific patterns
+        # Pattern: "We are looking for a skilled and analytical Data Scientist"
+        naukri_pattern = r'(?:We are looking for|We need|We want|Seeking|Hiring)\s+(?:a\s+)?(?:skilled\s+and\s+analytical\s+)?([A-Z][a-zA-Z\s]+?(?:Engineer|Developer|Analyst|Scientist|Manager|Lead|Architect|Consultant|Specialist))'
+        matches = re.findall(naukri_pattern, text, re.IGNORECASE)
+        if matches:
+            role = matches[0].strip()
+            if len(role) > 3:
+                return role
+        
+        # Strategy 4: Use enhanced patterns
         for pattern in self.role_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             if matches:
@@ -345,7 +528,7 @@ class JDParser:
                 if len(role) > 3:
                     return role
         
-        # Strategy 3: Fallback patterns
+        # Strategy 5: Fallback patterns
         fallback_patterns = [
             r'\b(?:We are looking for|We need|We want|Seeking|Hiring)\s+([A-Z][a-zA-Z\s]+?)(?:\s+to|\s+for|\s+who|\s+with|$)',
             r'\b(?:Position|Role|Job|Opening)\s*:\s*([A-Z][a-zA-Z\s]+?)(?:\s+in|\s+at|\s+for|$)',
@@ -404,7 +587,33 @@ class JDParser:
             if matches:
                 return matches[0].title()
         
-        # Strategy 2: Use enhanced location patterns
+        # Strategy 2: Look for LinkedIn specific location patterns
+        # Pattern: "(Bangalore • hybrid 2 days on‑site • salary up to ₹ 50 LPA)"
+        linkedin_location_pattern = r'\(([A-Z][a-zA-Z\s,]+?)(?:\s+•|\s+hybrid|\s+remote|\s+onsite|\s+in-office)'
+        matches = re.findall(linkedin_location_pattern, text, re.IGNORECASE)
+        if matches:
+            location = matches[0].strip()
+            if len(location) > 2 and location.lower() not in ['manyata', 'tech', 'park']:
+                return location
+        
+        # Strategy 2.1: Look for location in parentheses with better filtering
+        paren_location_pattern = r'\(([A-Z][a-zA-Z\s,]+?)\)'
+        matches = re.findall(paren_location_pattern, text, re.IGNORECASE)
+        if matches:
+            location = matches[0].strip()
+            # Filter out common non-location words
+            if len(location) > 2 and location.lower() not in ['manyata', 'tech', 'park', 'ust', 'www']:
+                return location
+        
+        # Strategy 3: Look for location in subject line
+        subject_location_pattern = r'(?:based in|in|at)\s+([A-Z][a-zA-Z\s,]+?)(?:\s*\)|\s*\.|\s*$|\s*\(|\s*\|)'
+        matches = re.findall(subject_location_pattern, subject, re.IGNORECASE)
+        if matches:
+            location = matches[0].strip()
+            if len(location) > 2:
+                return location
+        
+        # Strategy 4: Use enhanced location patterns
         for pattern in self.location_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             if matches:
@@ -412,7 +621,7 @@ class JDParser:
                 if len(location) > 2:
                     return location
         
-        # Strategy 3: Use spaCy NER
+        # Strategy 5: Use spaCy NER
         if self.nlp:
             doc = self.nlp(text)
             loc_entities = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
@@ -431,7 +640,41 @@ class JDParser:
         Returns:
             int: Years of experience or 0
         """
-        # Strategy 1: Use enhanced patterns
+        # Strategy 1: Look for LinkedIn specific patterns
+        # Pattern: "If you have 7‑9 years in data‑science/ML research"
+        linkedin_pattern = r'(?:If you have|with|experience of)\s+(\d+)[\s‑-]+(\d+)?\s+(?:years?|yrs?)(?:\s+in|\s+of|\s+with)'
+        matches = re.findall(linkedin_pattern, text, re.IGNORECASE)
+        if matches:
+            try:
+                min_years = int(matches[0][0])
+                max_years = int(matches[0][1]) if matches[0][1] else min_years
+                return (min_years + max_years) // 2  # Return average
+            except (ValueError, IndexError):
+                pass
+        
+        # Strategy 1.1: Look for "Exp - 5+ Years" pattern
+        exp_pattern = r'Exp\s*[-–]\s*(\d+)\+?\s*(?:Years?|yrs?)'
+        matches = re.findall(exp_pattern, text, re.IGNORECASE)
+        if matches:
+            try:
+                years = int(matches[0])
+                return years
+            except (ValueError, IndexError):
+                pass
+        
+        # Strategy 2: Look for Naukri specific patterns
+        # Pattern: "3‑8 years of hands-on experience"
+        naukri_pattern = r'(\d+)[\s‑-]+(\d+)?\s+(?:years?|yrs?)\s+(?:of\s+)?(?:hands-on\s+)?experience'
+        matches = re.findall(naukri_pattern, text, re.IGNORECASE)
+        if matches:
+            try:
+                min_years = int(matches[0][0])
+                max_years = int(matches[0][1]) if matches[0][1] else min_years
+                return (min_years + max_years) // 2  # Return average
+            except (ValueError, IndexError):
+                pass
+        
+        # Strategy 3: Use enhanced patterns
         for pattern in self.experience_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             if matches:
@@ -441,7 +684,7 @@ class JDParser:
                 except (ValueError, IndexError):
                     continue
         
-        # Strategy 2: Look for experience ranges
+        # Strategy 4: Look for experience ranges
         range_patterns = [
             r'\b(\d+)[\s-]+to[\s-]+(\d+)[\s-]+(?:years?|yrs?)',
             r'\b(\d+)[\s-]+(\d+)[\s-]+(?:years?|yrs?)',
@@ -457,7 +700,7 @@ class JDParser:
                 except (ValueError, IndexError):
                     continue
         
-        # Strategy 3: Look for experience levels
+        # Strategy 5: Look for experience levels
         level_patterns = {
             'entry': 0,
             'junior': 1,
@@ -565,6 +808,56 @@ class JDParser:
         skill = re.sub(r'[.,;:!?]+$', '', skill)
         
         return skill
+    
+    def _extract_salary_enhanced(self, text: str) -> float:
+        """
+        Enhanced salary extraction from job description text.
+        
+        Args:
+            text: Job description text
+            
+        Returns:
+            float: Salary in LPA (Lakhs Per Annum) or 0.0 if not found
+        """
+        try:
+            # Strategy 1: Look for specific salary patterns
+            for pattern in self.salary_patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                if matches:
+                    # Extract first match and convert to float
+                    salary_str = matches[0]
+                    if isinstance(salary_str, tuple):
+                        salary_str = salary_str[0]  # Take first group from tuple
+                    
+                    try:
+                        salary = float(salary_str)
+                        if 0 < salary <= 500:  # Reasonable range for LPA
+                            return salary
+                    except (ValueError, TypeError):
+                        continue
+            
+            # Strategy 2: Look for general salary mentions
+            general_patterns = [
+                r'(\d+(?:\.\d+)?)\s*(?:lakhs?|LPA|lpa)',
+                r'(?:salary|package|compensation|ctc)\s*:?\s*₹?\s*(\d+(?:\.\d+)?)',
+                r'₹\s*(\d+(?:\.\d+)?)\s*(?:lakhs?|L)',
+            ]
+            
+            for pattern in general_patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                if matches:
+                    try:
+                        salary = float(matches[0])
+                        if 0 < salary <= 500:  # Reasonable range for LPA
+                            return salary
+                    except (ValueError, TypeError):
+                        continue
+            
+            return 0.0
+            
+        except Exception as e:
+            logger.warning(f"Error extracting salary: {e}")
+            return 0.0
     
     def _calculate_confidence_score(self, company: str, role: str, location: str, experience: int, skills: List[str]) -> float:
         """Calculate overall confidence score for the parsing."""

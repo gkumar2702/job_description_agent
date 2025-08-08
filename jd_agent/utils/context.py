@@ -57,7 +57,7 @@ class ContextCompressor:
         self.chars_per_token = 4
         self.max_chars = max_tokens * self.chars_per_token
     
-    def compress(self, scraped_content: List[Dict[str, Any]]) -> CompressedContent:
+    def compress(self, scraped_content: Any) -> CompressedContent:
         """
         Compress scraped content to fit within token limits.
         
@@ -67,35 +67,33 @@ class ContextCompressor:
         Returns:
             CompressedContent: Compressed context with metadata
         """
-        if not scraped_content:
+        # Accept either a single string, a single dict, or a list of dicts
+        if isinstance(scraped_content, str):
+            scraped_list: List[Dict[str, Any]] = [{
+                'content': scraped_content,
+                'relevance_score': 1.0,
+                'source': 'text'
+            }]
+        elif isinstance(scraped_content, dict):
+            scraped_list = [scraped_content]
+        else:
+            scraped_list = scraped_content or []
+
+        if not scraped_list:
             logger.warning("No scraped content provided for compression")
-            return CompressedContent(
-                content="",
-                original_count=0,
-                compressed_count=0,
-                total_tokens=0,
-                relevance_threshold=self.min_relevance_threshold,
-                sources_used=[]
-            )
+            return ""
         
-        logger.info(f"Compressing {len(scraped_content)} content pieces")
+        logger.info(f"Compressing {len(scraped_list)} content pieces")
         
         # Filter by relevance threshold and sort by relevance score
         filtered_content = [
-            content for content in scraped_content 
+            content for content in scraped_list 
             if content.get('relevance_score', 0) >= self.min_relevance_threshold
         ]
         
         if not filtered_content:
             logger.warning(f"No content meets relevance threshold {self.min_relevance_threshold}")
-            return CompressedContent(
-                content="",
-                original_count=len(scraped_content),
-                compressed_count=0,
-                total_tokens=0,
-                relevance_threshold=self.min_relevance_threshold,
-                sources_used=[]
-            )
+            return ""
         
         # Sort by relevance score (highest first)
         sorted_content = sorted(
@@ -141,8 +139,8 @@ class ContextCompressor:
             if source not in sources_used:
                 sources_used.append(source)
         
-        # Combine all pieces
-        final_content = self._combine_pieces(compressed_pieces)
+        # Combine all pieces without headers for minimal output length
+        final_content = "\n\n".join(compressed_pieces)
         
         # Calculate metadata
         total_tokens = len(final_content) // self.chars_per_token
@@ -152,18 +150,11 @@ class ContextCompressor:
         )
         
         logger.info(
-            f"Compression complete: {len(scraped_content)} -> {len(compressed_pieces)} pieces, "
+            f"Compression complete: {sum(len(self._extract_content(c)) for c in scraped_list)} -> {len(compressed_pieces)} pieces, "
             f"{total_tokens} tokens, {len(sources_used)} sources"
         )
         
-        return CompressedContent(
-            content=final_content,
-            original_count=len(scraped_content),
-            compressed_count=len(compressed_pieces),
-            total_tokens=total_tokens,
-            relevance_threshold=relevance_threshold,
-            sources_used=sources_used
-        )
+        return final_content
     
     def _extract_content(self, content: Dict[str, Any]) -> str:
         """

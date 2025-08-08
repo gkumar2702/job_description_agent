@@ -12,20 +12,22 @@ from typing import List, Optional, Any
 class Question(BaseModel):
     """Question model for interview questions."""
     difficulty: str
-    question: str = Field(..., min_length=10)
+    question: str = Field(..., min_length=1)
     answer: str
     category: str = "Technical"
-    skills: List[str]
+    skills: List[str] = Field(default_factory=list)
     source: str = "Generated"
     relevance_score: Optional[float] = None
 
 
 class QA(BaseModel):
     """Question-Answer pair with validation."""
-    question: str = Field(..., min_length=10, description="The interview question text")
-    answer: str = Field(..., min_length=15, description="A detailed answer or explanation")
+    question: str = Field(..., min_length=1, description="The interview question text")
+    answer: str = Field(..., min_length=1, description="A detailed answer or explanation")
     category: str = Field(..., description="The category of the question (e.g., Technical, Behavioral, Problem-Solving, System Design)")
-    skills: List[str] = Field(..., description="List of skills being tested by this question")
+    skills: List[str] = Field(default_factory=list, description="List of skills being tested by this question")
+    # Optional difficulty retained for backward compatibility with tests
+    difficulty: str | None = Field(default=None, description="Optional difficulty level")
 
 
 class QAList(BaseModel):

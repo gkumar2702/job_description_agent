@@ -30,14 +30,19 @@ ALLOWED_DOMAINS = [
     'linkedin.com', 'indeed.com', 'glassdoor.com', 'monster.com',
     'careerbuilder.com', 'ziprecruiter.com', 'simplyhired.com',
     'dice.com', 'angel.co', 'stackoverflow.com', 'github.com',
-    'lever.co', 'greenhouse.io', 'workday.com', 'bamboohr.com'
+    'lever.co', 'greenhouse.io', 'workday.com', 'bamboohr.com',
+    'naukri.com', 'mailb.linkedin.com', 'bounce.linkedin.com'
 ]
 
 JOB_KEYWORDS = [
     'job description', 'position description', 'role description',
     'we are hiring', 'join our team', 'career opportunity',
     'open position', 'job opening', 'hiring for', 'apply now',
-    'job posting', 'career opening', 'employment opportunity'
+    'job posting', 'career opening', 'employment opportunity',
+    'Job |', 'Job Opportunity', 'AI Engineer', 'Data Scientist', 
+    'Lead Data Scientist', 'Software Engineer', 'Developer',
+    'inmail-hit-reply@linkedin.com', '✉️ Job', 'Job |',
+    'LPA', 'salary', 'remote', 'hybrid', 'bangalore', 'bengaluru'
 ]
 
 JD_ATTACHMENT_PATTERN = re.compile(
@@ -143,6 +148,90 @@ class EmailCollector:
             logger.error(f"OAuth flow failed: {e}")
             return None
     
+    def fetch_job_description_emails(self, max_results: int = 10) -> List[Dict[str, Any]]:
+        """
+        Fetch individual job description emails.
+        
+        Args:
+            max_results: Maximum number of emails to fetch
+            
+        Returns:
+            List of email data
+        """
+        if not self.service:
+            self._authenticate()
+        
+        try:
+            # Build enhanced search query
+            search_query = self._build_enhanced_search_query()
+            
+            # Fetch messages directly
+            results = self.service.users().messages().list(
+                userId='me',
+                q=search_query,
+                maxResults=max_results
+            ).execute()
+            
+            messages = results.get('messages', [])
+            email_data = []
+            
+            for message in messages:
+                message_id = message['id']
+                
+                # Get detailed message information
+                message_detail = self.service.users().messages().get(
+                    userId='me', id=message_id
+                ).execute()
+                
+                message_data = self._process_message(message_detail)
+                
+                if message_data:
+                    email_data.append(message_data)
+            
+            logger.info(f"Found {len(email_data)} potential job description emails")
+            return email_data
+            
+        except HttpError as error:
+            logger.error(f"Gmail API error: {error}")
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching job description emails: {e}")
+            return []
+    
+    def extract_job_description_from_email(self, email: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract job description text from email data.
+        
+        Args:
+            email: Email data dictionary
+            
+        Returns:
+            Optional[str]: Job description text or None
+        """
+        try:
+            # Extract body content
+            body = email.get('body', '')
+            
+            # If body is empty, try to get from message data
+            if not body and 'message' in email:
+                message = email['message']
+                body = self._extract_message_body(message)
+            
+            # Clean and return the body text
+            if body:
+                # Remove HTML tags if present
+                import re
+                clean_body = re.sub(r'<[^>]+>', '', body)
+                # Remove extra whitespace
+                clean_body = re.sub(r'\s+', ' ', clean_body).strip()
+                return clean_body
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error extracting job description from email: {e}")
+            return None
+
     def fetch_job_description_threads(self, max_results: int = 50) -> List[Dict[str, Any]]:
         """
         Fetch email threads that might contain job descriptions.
@@ -205,22 +294,31 @@ class EmailCollector:
         """Build a comprehensive search query for job description emails."""
         query_parts = []
         
-        # Domain-based search
+        # Domain-based search (more inclusive)
         domain_queries = [f"from:{domain}" for domain in ALLOWED_DOMAINS]
         query_parts.append(f"({' OR '.join(domain_queries)})")
         
-        # Keyword-based search
-        keyword_queries = [f'"{keyword}"' for keyword in JOB_KEYWORDS]
-        query_parts.append(f"({' OR '.join(keyword_queries)})")
+        # Subject-based search for job-related terms
+        subject_keywords = [
+            'Job', 'Opportunity', 'Hiring', 'Position', 'Role',
+            'Data Scientist', 'AI Engineer', 'Software Engineer',
+            'Developer', 'Lead', 'Senior', 'Remote', 'Hybrid'
+        ]
+        subject_queries = [f'subject:"{keyword}"' for keyword in subject_keywords]
+        query_parts.append(f"({' OR '.join(subject_queries)})")
         
-        # Attachment search
-        query_parts.append("has:attachment")
+        # Sender-based search for LinkedIn and job portals
+        sender_queries = [
+            'from:linkedin.com', 'from:naukri.com', 'from:indeed.com',
+            'from:inmail-hit-reply@linkedin.com', 'from:mailb.linkedin.com'
+        ]
+        query_parts.append(f"({' OR '.join(sender_queries)})")
         
-        # Time-based search (last 30 days)
-        query_parts.append("newer_than:30d")
+        # Time-based search (last 90 days to catch more emails)
+        query_parts.append("newer_than:90d")
         
-        # Combine all parts
-        return " AND ".join(query_parts)
+        # Combine all parts with OR instead of AND for more inclusive search
+        return " OR ".join(query_parts)
     
     def _process_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process a Gmail message and extract relevant information."""
@@ -287,11 +385,26 @@ class EmailCollector:
     
     def _check_keyword_hit(self, text: str) -> bool:
         """Check if text contains job-related keywords with word boundaries."""
+        text_lower = text.lower()
+        
+        # Check for exact keyword matches
         for keyword in JOB_KEYWORDS:
-            # Use word boundaries to avoid false positives
-            pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
-            if re.search(pattern, text.lower()):
+            keyword_lower = keyword.lower()
+            if keyword_lower in text_lower:
                 return True
+        
+        # Check for job-related patterns
+        job_patterns = [
+            'job', 'opportunity', 'hiring', 'position', 'role',
+            'data scientist', 'ai engineer', 'software engineer',
+            'developer', 'lead', 'senior', 'remote', 'hybrid',
+            'lpa', 'salary', 'bangalore', 'bengaluru'
+        ]
+        
+        for pattern in job_patterns:
+            if pattern in text_lower:
+                return True
+        
         return False
     
     def _check_attachment_hit(self, filename: str) -> bool:

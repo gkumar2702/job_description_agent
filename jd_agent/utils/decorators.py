@@ -26,10 +26,10 @@ def log_time(event_name: str) -> Callable[[Callable[..., T]], Callable[..., T]]:
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> T:
-            start_time = time.time()
+            start_time = time.perf_counter()
             try:
                 result = func(*args, **kwargs)
-                elapsed_ms = int((time.time() - start_time) * 1000)
+                elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 
                 # Log success
                 logger.info(
@@ -41,7 +41,7 @@ def log_time(event_name: str) -> Callable[[Callable[..., T]], Callable[..., T]]:
                 
                 return result
             except Exception as e:
-                elapsed_ms = int((time.time() - start_time) * 1000)
+                elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 
                 # Log error
                 logger.error(
@@ -70,10 +70,10 @@ def log_time_async(event_name: str) -> Callable[[Callable[..., Any]], Callable[.
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            start_time = time.time()
+            start_time = time.perf_counter()
             try:
                 result = await func(*args, **kwargs)
-                elapsed_ms = int((time.time() - start_time) * 1000)
+                elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 
                 # Log success
                 logger.info(
@@ -85,7 +85,7 @@ def log_time_async(event_name: str) -> Callable[[Callable[..., Any]], Callable[.
                 
                 return result
             except Exception as e:
-                elapsed_ms = int((time.time() - start_time) * 1000)
+                elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 
                 # Log error
                 logger.error(
@@ -99,3 +99,21 @@ def log_time_async(event_name: str) -> Callable[[Callable[..., Any]], Callable[.
         
         return wrapper
     return decorator 
+
+
+def timing_decorator(func: Callable[..., T]) -> Callable[..., T]:
+    """Simple timing decorator expected by tests.
+
+    Measures execution time of a sync function and logs it.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> T:
+        start_time = time.perf_counter()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            logger.info("function_timing", func_name=func.__name__, elapsed_ms=elapsed_ms)
+
+    return wrapper

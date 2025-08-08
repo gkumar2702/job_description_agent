@@ -6,7 +6,7 @@ Coordinates all components to process job descriptions and generate interview qu
 
 import asyncio
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from .components.email_collector import EmailCollector
@@ -14,6 +14,8 @@ from .components.jd_parser import JDParser, JobDescription
 from .components.scraping_agent import ScrapingAgent
 from .components.prompt_engine import PromptEngine
 from .components.question_bank import QuestionBank
+from .components.email_selector import EmailSelector
+from .components.pdf_exporter import PDFExporter
 from .utils.config import Config
 from .utils.database import Database
 from .utils.logger import get_logger
@@ -42,8 +44,124 @@ class JDAgent:
         self.scraping_agent = ScrapingAgent(config, self.database)
         self.prompt_engine = PromptEngine(config)
         self.question_bank = QuestionBank()
+        self.email_selector = EmailSelector(self.email_collector, self.jd_parser)
+        self.pdf_exporter = PDFExporter(self.config.get_export_dir())
         
         logger.info("JD Agent initialized successfully")
+    
+    async def process_emails_interactively(self, max_emails: int = 20) -> Dict[str, Any]:
+        """
+        Process emails interactively with user selection.
+        
+        Args:
+            max_emails: Maximum number of emails to fetch
+            
+        Returns:
+            Dict[str, Any]: Results summary
+        """
+        logger.info("Starting interactive email processing...")
+        
+        try:
+            # 1. Fetch and display emails for user selection
+            selected_emails = await self.email_selector.fetch_and_display_emails(max_emails)
+            
+            if not selected_emails:
+                return {
+                    'error': 'No emails selected for processing',
+                    'total_questions': 0,
+                    'duration_seconds': 0,
+                    'export_files': []
+                }
+            
+            # 2. Process selected emails
+            processed_jds = await self.email_selector.process_selected_emails(selected_emails)
+            
+            if not processed_jds:
+                return {
+                    'error': 'No job descriptions could be extracted from selected emails',
+                    'total_questions': 0,
+                    'duration_seconds': 0,
+                    'export_files': []
+                }
+            
+            # 3. Generate questions for each job description
+            all_questions = []
+            export_files = []
+            
+            for i, processed_jd in enumerate(processed_jds, 1):
+                jd = processed_jd['job_description']
+                email_data = processed_jd['email_data']
+                
+                print(f"\n🔄 Processing Job Description {i}/{len(processed_jds)}: {jd.role} at {jd.company}")
+                
+                # Generate questions (aiming for 50+ questions)
+                questions = await self.prompt_engine.generate_questions_async(jd, [])
+                
+                if questions:
+                    all_questions.extend(questions)
+                    
+                    # Export to PDF
+                    try:
+                        metadata = {
+                            'email_subject': email_data.get('subject', 'Unknown'),
+                            'email_sender': email_data.get('from', 'Unknown'),
+                            'email_date': email_data.get('date', 'Unknown'),
+                            'total_questions': len(questions),
+                            'questions_by_difficulty': self._get_questions_by_difficulty(questions),
+                            'average_relevance_score': self._get_average_relevance_score(questions)
+                        }
+                        
+                        pdf_path = self.pdf_exporter.export_questions_to_pdf(jd, questions, metadata)
+                        export_files.append(pdf_path)
+                        
+                        print(f"✅ Generated {len(questions)} questions")
+                        print(f"✅ Exported to PDF: {pdf_path}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error exporting PDF for {jd.role}: {e}")
+                        print(f"❌ Error exporting PDF: {e}")
+                
+                else:
+                    print(f"❌ No questions generated for {jd.role}")
+            
+            # 4. Print final summary
+            print(f"\n🎉 Processing Complete!")
+            print(f"📊 Total job descriptions processed: {len(processed_jds)}")
+            print(f"❓ Total questions generated: {len(all_questions)}")
+            print(f"📄 PDF files created: {len(export_files)}")
+            
+            return {
+                'total_questions': len(all_questions),
+                'questions_by_difficulty': self._get_questions_by_difficulty(all_questions),
+                'average_relevance_score': self._get_average_relevance_score(all_questions),
+                'export_files': export_files,
+                'processed_jds': len(processed_jds)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in interactive email processing: {e}")
+            return {
+                'error': str(e),
+                'total_questions': 0,
+                'duration_seconds': 0,
+                'export_files': []
+            }
+    
+    def _get_questions_by_difficulty(self, questions: List[dict]) -> Dict[str, int]:
+        """Get questions grouped by difficulty level."""
+        difficulty_counts = {}
+        for question in questions:
+            difficulty = question.get('difficulty', 'unknown')
+            difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+        return difficulty_counts
+    
+    def _get_average_relevance_score(self, questions: List[dict]) -> float:
+        """Get average relevance score of questions."""
+        if not questions:
+            return 0.0
+        
+        total_score = sum(q.get('relevance_score', 0) for q in questions)
+        return total_score / len(questions)
     
     async def process_single_jd(self, job_description_text: str, company: str = "Unknown") -> List[dict]:
         """
@@ -69,29 +187,33 @@ class JDAgent:
             
             # 2. Mine knowledge using LangGraph-based scraping agent
             logger.info("2. Mining knowledge from various sources...")
-            scraped_content = await self.scraping_agent.run_scraping_workflow(jd)
-            logger.info(f"✅ Found {len(scraped_content)} relevant content pieces")
+            scraped_content = self.scraping_agent.run_scraping_workflow(jd)
+            logger.info(f"✅ Found {scraped_content.get('content_count', 0)} relevant content pieces")
             
             # 3. Generate questions
             logger.info("3. Generating interview questions...")
             questions = []
-            if scraped_content and self.prompt_engine.client:
-                questions = await self.prompt_engine.generate_questions(jd, scraped_content)
+            if scraped_content.get('content') and self.prompt_engine.client:
+                questions = await self.prompt_engine.generate_questions_async(jd, scraped_content['content'])
                 logger.info(f"✅ Generated {len(questions)} questions")
             else:
                 logger.warning("No content found or OpenAI client not available")
             
             # 4. Add questions to question bank
             logger.info("4. Processing questions...")
-            for question in questions:
-                self.question_bank.add_question(question)
+            if questions:
+                self.question_bank.add_questions(questions)
             
             # 5. Export questions
             logger.info("5. Exporting questions...")
-            export_files = self.question_bank.export_questions(
-                jd.company, jd.role, self.config.get_export_dir()
-            )
-            logger.info(f"✅ Exported to: {', '.join(export_files)}")
+            try:
+                export_files = await self.question_bank.export_questions(
+                    jd, questions, formats=['markdown', 'csv', 'json']
+                )
+                logger.info(f"✅ Exported to: {', '.join(export_files.values())}")
+            except Exception as e:
+                logger.error(f"Error exporting questions: {e}")
+                logger.info("✅ Export failed, continuing...")
             
             # 6. Print statistics
             self._print_statistics(jd, scraped_content, questions)
@@ -199,10 +321,11 @@ class JDAgent:
                 'duration_seconds': (datetime.now() - start_time).total_seconds()
             }
     
-    def _print_statistics(self, jd: JobDescription, scraped_content: List, questions: List[dict]):
+    def _print_statistics(self, jd: JobDescription, scraped_content: Dict, questions: List[dict]):
         """Print processing statistics."""
         print(f"\n📊 Statistics for {jd.company} - {jd.role}:")
-        print(f"   Scraped content: {len(scraped_content)} pieces")
+        content_count = scraped_content.get('content_count', 0) if isinstance(scraped_content, dict) else len(scraped_content)
+        print(f"   Scraped content: {content_count} pieces")
         print(f"   Generated questions: {len(questions)}")
         
         if questions:

@@ -24,6 +24,7 @@ from ..utils.decorators import log_time, log_time_async
 from ..utils.schemas import Question
 from .jd_parser import JobDescription
 from .scoring_strategies import ScoringStrategy, HeuristicScorer
+from .pdf_exporter import PDFExporter
 
 logger = get_logger(__name__)
 
@@ -47,6 +48,7 @@ class QuestionBank:
         
         # Use provided scorer or default to HeuristicScorer
         self.scorer = scorer if scorer is not None else HeuristicScorer()
+        self.pdf_exporter = PDFExporter(self.export_dir)
     
     def add_questions(self, questions: List[Dict[str, Any]]) -> None:
         """
@@ -201,7 +203,7 @@ class QuestionBank:
         
         # Use rapidfuzz token_set_ratio for better similarity detection
         # This handles paraphrasing, word order changes, and partial matches
-        return fuzz.token_set_ratio(question1, question2)
+        return int(round(fuzz.token_set_ratio(question1, question2)))
     
     @log_time("scoring_done")
     def score_questions(self, jd: JobDescription) -> List[Dict[str, Any]]:
@@ -220,6 +222,7 @@ class QuestionBank:
             score = self.scorer.score(question, jd)
             scored_question = question.model_dump()
             scored_question['relevance_score'] = score
+            scored_question['score'] = score
             scored_questions.append(scored_question)
         
         # Sort by relevance score (highest first)
@@ -232,134 +235,47 @@ class QuestionBank:
                              questions: List[Dict[str, Any]], 
                              formats: List[str] = None) -> Dict[str, str]:
         """
-        Export questions in various formats with async support.
-        
-        Args:
-            jd: Job description object
-            questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
-            
-        Returns:
-            Dict[str, str]: Dictionary mapping format to file path
+        Export questions as a single PDF file only.
         """
-        # Check if we're in an async context
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in an async context, run async version
-            return await self.export_questions_async(jd, questions, formats)
-        except RuntimeError:
-            # No running loop, use sync fallback
-            return self._export_questions_sync(jd, questions, formats)
+        return self._export_pdf_only(jd, questions)
     
     def export_questions_sync(self, jd: JobDescription, 
                             questions: List[Dict[str, Any]], 
                             formats: List[str] = None) -> Dict[str, str]:
-        """
-        Synchronous version of export_questions for backward compatibility.
-        
-        Args:
-            jd: Job description object
-            questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
-            
-        Returns:
-            Dict[str, str]: Dictionary mapping format to file path
-        """
-        return self._export_questions_sync(jd, questions, formats)
+        """Synchronous PDF-only export for backward compatibility."""
+        return self._export_pdf_only(jd, questions)
     
     async def export_questions_async(self, jd: JobDescription, 
                                    questions: List[Dict[str, Any]], 
                                    formats: List[str] = None) -> Dict[str, str]:
-        """
-        Export questions in various formats asynchronously.
-        
-        Args:
-            jd: Job description object
-            questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
-            
-        Returns:
-            Dict[str, str]: Dictionary mapping format to file path
-        """
-        if formats is None:
-            formats = ['markdown', 'csv', 'json', 'xlsx']
-        
-        export_files = {}
-        
-        # Create filename base
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        company_safe = jd.company.replace(' ', '_').replace('/', '_')
-        role_safe = jd.role.replace(' ', '_').replace('/', '_')
-        filename_base = f"{company_safe}_{role_safe}_{timestamp}"
-        
-        for format_type in formats:
-            try:
-                if format_type == 'markdown':
-                    file_path = await self._export_markdown_async(questions, jd, filename_base)
-                elif format_type == 'csv':
-                    file_path = await self._export_csv_async(questions, jd, filename_base)
-                elif format_type == 'json':
-                    file_path = await self._export_json_async(questions, jd, filename_base)
-                elif format_type == 'xlsx':
-                    file_path = await self._export_xlsx_async(questions, jd, filename_base)
-                else:
-                    logger.warning(f"Unknown export format: {format_type}")
-                    continue
-                
-                export_files[format_type] = file_path
-                logger.info(f"Exported questions in {format_type} format: {file_path}")
-                
-            except Exception as e:
-                logger.error(f"Error exporting in {format_type} format: {e}")
-        
-        return export_files
+        """Asynchronous wrapper that still performs PDF-only export."""
+        return self._export_pdf_only(jd, questions)
     
-    def _export_questions_sync(self, jd: JobDescription, 
-                             questions: List[Dict[str, Any]], 
-                             formats: List[str] = None) -> Dict[str, str]:
-        """
-        Synchronous fallback for exporting questions.
-        
-        Args:
-            jd: Job description object
-            questions: List of questions to export
-            formats: List of export formats ('markdown', 'csv', 'json', 'xlsx')
-            
-        Returns:
-            Dict[str, str]: Dictionary mapping format to file path
-        """
-        if formats is None:
-            formats = ['markdown', 'csv', 'json', 'xlsx']
-        
-        export_files = {}
-        
-        # Create filename base
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        company_safe = jd.company.replace(' ', '_').replace('/', '_')
-        role_safe = jd.role.replace(' ', '_').replace('/', '_')
-        filename_base = f"{company_safe}_{role_safe}_{timestamp}"
-        
-        for format_type in formats:
-            try:
-                if format_type == 'markdown':
-                    file_path = self._export_markdown(questions, jd, filename_base)
-                elif format_type == 'csv':
-                    file_path = self._export_csv(questions, jd, filename_base)
-                elif format_type == 'json':
-                    file_path = self._export_json(questions, jd, filename_base)
-                elif format_type == 'xlsx':
-                    file_path = self._export_xlsx(questions, jd, filename_base)
-                else:
-                    logger.warning(f"Unknown export format: {format_type}")
-                    continue
-                
-                export_files[format_type] = file_path
-                logger.info(f"Exported questions in {format_type} format: {file_path}")
-                
-            except Exception as e:
-                logger.error(f"Error exporting in {format_type} format: {e}")
-        
-        return export_files
+    def _export_pdf_only(self, jd: JobDescription, questions: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Generate a single PDF export and return its path under the 'pdf' key."""
+        try:
+            metadata = {
+                'total_questions': len(questions),
+                'questions_by_difficulty': self._count_by_difficulty_from_list(questions),
+                'average_relevance_score': self._avg_relevance_from_list(questions),
+                'generated_at': datetime.now().isoformat(),
+            }
+            pdf_path = self.pdf_exporter.export_questions_to_pdf(jd, questions, metadata)
+            logger.info(f"Exported questions in pdf format: {pdf_path}")
+            return {'pdf': pdf_path}
+        except Exception as e:
+            logger.error(f"Error exporting PDF: {e}")
+            return {}
+
+    def _count_by_difficulty_from_list(self, questions: List[Dict[str, Any]]) -> Dict[str, int]:
+        counts: Dict[str, int] = defaultdict(int)
+        for q in questions:
+            counts[q.get('difficulty', 'unknown')] += 1
+        return dict(counts)
+
+    def _avg_relevance_from_list(self, questions: List[Dict[str, Any]]) -> float:
+        scores = [q.get('relevance_score') for q in questions if isinstance(q.get('relevance_score'), (int, float))]
+        return sum(scores) / len(scores) if scores else 0.0
     
     def _export_markdown(self, questions: List[Dict[str, Any]], 
                         jd: JobDescription, filename_base: str) -> str:
@@ -748,33 +664,70 @@ class QuestionBank:
             Dict[str, Any]: Question statistics
         """
         if not self.questions:
-            return {}
+            return {
+                'total_questions': 0,
+                'difficulty_distribution': {},
+                'category_distribution': {},
+            }
         
         stats = {
             'total_questions': len(self.questions),
-            'by_difficulty': defaultdict(int),
-            'by_category': defaultdict(int),
-            'by_source': defaultdict(int),
-            'avg_relevance_score': 0.0
+            'difficulty_distribution': defaultdict(int),
+            'category_distribution': defaultdict(int),
         }
+        
+        for question in self.questions:
+            difficulty = getattr(question, 'difficulty', 'unknown')
+            category = getattr(question, 'category', 'unknown')
+            stats['difficulty_distribution'][difficulty] += 1
+            stats['category_distribution'][category] += 1
+        
+        stats['difficulty_distribution'] = dict(stats['difficulty_distribution'])
+        stats['category_distribution'] = dict(stats['category_distribution'])
+        return stats
+    
+    def get_questions_by_difficulty(self) -> Dict[str, int]:
+        """
+        Get questions grouped by difficulty level.
+        
+        Returns:
+            Dict[str, int]: Count of questions by difficulty
+        """
+        difficulty_counts = defaultdict(int)
+        
+        for question in self.questions:
+            difficulty = getattr(question, 'difficulty', 'unknown')
+            difficulty_counts[difficulty] += 1
+        
+        return dict(difficulty_counts)
+    
+    def get_average_relevance_score(self) -> float:
+        """
+        Get the average relevance score of all questions.
+        
+        Returns:
+            float: Average relevance score
+        """
+        if not self.questions:
+            return 0.0
         
         total_score = 0.0
         scored_count = 0
         
         for question in self.questions:
-            difficulty = question.get('difficulty', 'unknown')
-            category = question.get('category', 'unknown')
-            source = question.get('source', 'unknown')
-            
-            stats['by_difficulty'][difficulty] += 1
-            stats['by_category'][category] += 1
-            stats['by_source'][source] += 1
-            
-            if 'relevance_score' in question:
-                total_score += question['relevance_score']
+            if hasattr(question, 'relevance_score') and question.relevance_score is not None:
+                total_score += question.relevance_score
                 scored_count += 1
         
-        if scored_count > 0:
-            stats['avg_relevance_score'] = total_score / scored_count
+        return total_score / scored_count if scored_count > 0 else 0.0
+    
+    def get_export_files(self) -> List[str]:
+        """
+        Get list of exported files.
         
-        return stats 
+        Returns:
+            List[str]: List of exported file paths
+        """
+        # This would typically track exported files
+        # For now, return empty list
+        return [] 

@@ -57,7 +57,8 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 3. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
-   pip install -e .
+    # Optional: install as editable package
+    # pip install -e .
    ```
 
 4. **Configure environment**:
@@ -68,7 +69,11 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 
 5. **Setup Gmail authentication**:
    ```bash
-   python setup/gmail_auth_setup.py
+    # OAuth-based Gmail auth (recommended)
+    python setup/setup_gmail_auth.py
+
+    # Optional: Service account setup
+    python setup/setup_service_account.py
    ```
 
 ## 🚀 Quick Start
@@ -319,7 +324,7 @@ python scripts/qb_cli.py stats questions.json
 ### Type Safety
 ```bash
 # Run tests
-python test/run_tests.py
+pytest -q
 
 # Install type stubs
 pip install types-aiofiles pandas-stubs types-openpyxl
@@ -331,8 +336,8 @@ pip install types-aiofiles pandas-stubs types-openpyxl
 pytest
 
 # Run specific test categories
-pytest test/test_new_features.py
-pytest test/test_embeddings_and_async_export.py
+pytest test/test_jd_parser.py
+pytest test/test_question_bank.py
 ```
 
 ### Code Quality
@@ -366,7 +371,7 @@ flake8 jd_agent/ test/ scripts/
 #### Gmail Authentication
 ```bash
 # Regenerate credentials
-python setup/gmail_auth_setup.py
+python setup/setup_gmail_auth.py
 ```
 
 #### OpenAI API Errors
@@ -394,7 +399,7 @@ export LOG_LEVEL=DEBUG
 2. Create a feature branch
 3. Make your changes
 4. Add tests
-5. Run tests: `python test/run_tests.py`
+5. Run tests: `pytest`
 6. Submit a pull request
 
 ### Code Standards

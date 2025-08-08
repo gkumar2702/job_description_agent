@@ -15,21 +15,24 @@ class Config(BaseModel):
     """Configuration class for JD Agent application."""
     
     # API Keys
-    OPENAI_API_KEY: str = Field(default="", description="OpenAI API key")
-    SERPAPI_KEY: str = Field(default="", description="SerpAPI key")
+    OPENAI_API_KEY: str = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""), description="OpenAI API key")
+    SERPAPI_KEY: str = Field(
+        default_factory=lambda: os.getenv("SERPAPI_API_KEY") or os.getenv("SERPAPI_KEY", ""),
+        description="SerpAPI key"
+    )
     GMAIL_REFRESH_TOKEN: str = Field(default="", description="Gmail refresh token")
     
     # OpenAI Configuration
-    OPENAI_MODEL: str = Field(default="gpt-4o", description="OpenAI model to use")
-    MAX_TOKENS: int = Field(default=2000, description="Maximum tokens for OpenAI responses")
-    TEMPERATURE: float = Field(default=0.3, description="Temperature for OpenAI responses (0.0-2.0)")
-    TOP_P: float = Field(default=0.9, description="Top-p sampling for OpenAI responses (0.0-1.0)")
+    OPENAI_MODEL: str = Field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-5"), description="OpenAI model to use")
+    MAX_TOKENS: int = Field(default_factory=lambda: int(os.getenv("MAX_TOKENS", "2000")), description="Maximum tokens for OpenAI responses")
+    TEMPERATURE: float = Field(default_factory=lambda: float(os.getenv("TEMPERATURE", "0.3")), description="Temperature for OpenAI responses (0.0-2.0)")
+    TOP_P: float = Field(default_factory=lambda: float(os.getenv("TOP_P", "0.9")), description="Top-p sampling for OpenAI responses (0.0-1.0)")
     
     # Database
-    DATABASE_PATH: str = Field(default="./data/jd_agent.db", description="SQLite database path")
+    DATABASE_PATH: str = Field(default_factory=lambda: os.getenv("DATABASE_PATH", "./data/jd_agent.db"), description="SQLite database path")
     
     # Export settings
-    EXPORT_DIR: str = Field(default="./exports", description="Export directory")
+    EXPORT_DIR: str = Field(default_factory=lambda: os.getenv("EXPORT_DIR", "./exports"), description="Export directory")
     
     # Search sources (from constants)
     SEARCH_SOURCES: dict[str, list[str]] = Field(
@@ -135,14 +138,35 @@ class Config(BaseModel):
     
     @classmethod
     def from_env(cls) -> "Config":
-        """Create Config instance from environment variables."""
+        """Create Config instance from environment variables.
+
+        Supports SERPAPI_API_KEY as an alias for SERPAPI_KEY.
+        """
+        serpapi_key = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY", "")
+        openai_api_key = os.getenv("OPENAI_API_KEY", "")
+
+        # Optional overrides
+        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        max_tokens = int(os.getenv("MAX_TOKENS", "2000"))
+        temperature = float(os.getenv("TEMPERATURE", "0.3"))
+        top_p = float(os.getenv("TOP_P", "0.9"))
+
         return cls(
-            OPENAI_API_KEY=os.getenv("OPENAI_API_KEY", ""),
-            SERPAPI_KEY=os.getenv("SERPAPI_KEY", ""),
+            OPENAI_API_KEY=openai_api_key,
+            SERPAPI_KEY=serpapi_key,
             GMAIL_REFRESH_TOKEN=os.getenv("GMAIL_REFRESH_TOKEN", ""),
             DATABASE_PATH=os.getenv("DATABASE_PATH", "./data/jd_agent.db"),
-            EXPORT_DIR=os.getenv("EXPORT_DIR", "./exports")
+            EXPORT_DIR=os.getenv("EXPORT_DIR", "./exports"),
+            OPENAI_MODEL=model,
+            MAX_TOKENS=max_tokens,
+            TEMPERATURE=temperature,
+            TOP_P=top_p,
         )
+
+    # Backward-compatible alias for tests expecting SERPAPI_API_KEY
+    @property
+    def SERPAPI_API_KEY(self) -> str:  # noqa: N802 (keep legacy name)
+        return self.SERPAPI_KEY
 
 
 # Global config instance for backward compatibility

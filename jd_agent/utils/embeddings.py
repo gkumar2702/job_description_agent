@@ -37,7 +37,7 @@ class EmbeddingManager:
             logger.error(f"Failed to load sentence transformer model: {e}")
             self.model = None
     
-    def get_embedding(self, text: str) -> Optional[np.ndarray]:
+    def get_embedding(self, text: str) -> Optional[list]:
         """
         Get embedding for a text, using cache if available.
         
@@ -56,7 +56,7 @@ class EmbeddingManager:
         
         # Check cache first
         if text in self.embedding_cache:
-            return self.embedding_cache[text]
+            return self.embedding_cache[text].tolist()
         
         try:
             # Generate embedding
@@ -65,7 +65,7 @@ class EmbeddingManager:
             # Cache the embedding
             self.embedding_cache[text] = embedding
             
-            return embedding
+            return embedding.tolist()
         except Exception as e:
             logger.error(f"Failed to generate embedding for text: {e}")
             return None
@@ -89,12 +89,26 @@ class EmbeddingManager:
         
         try:
             # Compute cosine similarity
-            similarity = np.dot(embedding1, embedding2) / (
-                np.linalg.norm(embedding1) * np.linalg.norm(embedding2)
+            v1 = np.asarray(embedding1)
+            v2 = np.asarray(embedding2)
+            similarity = np.dot(v1, v2) / (
+                np.linalg.norm(v1) * np.linalg.norm(v2)
             )
             return float(similarity)
         except Exception as e:
             logger.error(f"Failed to compute similarity: {e}")
+            return 0.0
+
+    # Backward-compatible alias expected by tests
+    def calculate_similarity(self, embedding1: np.ndarray | list, embedding2: np.ndarray | list) -> float:
+        """Compute cosine similarity given two embeddings (legacy interface)."""
+        try:
+            v1 = np.asarray(embedding1)
+            v2 = np.asarray(embedding2)
+            similarity = float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
+            return similarity
+        except Exception as e:
+            logger.error(f"Failed to calculate similarity: {e}")
             return 0.0
     
     def clear_cache(self) -> None:
