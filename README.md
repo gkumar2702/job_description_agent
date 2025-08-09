@@ -2,6 +2,26 @@
 
 A comprehensive AI-powered system for automatically collecting, parsing, and generating interview questions from job descriptions using Gmail integration, advanced NLP, and machine learning techniques.
 
+## 🆕 Recent Updates (v2.1.0)
+
+### ✅ Complete Test Suite Overhaul
+- **65 comprehensive tests** now passing with 100% success rate
+- **Enhanced test coverage** for all core components
+- **Improved reliability** with robust mocking and error handling
+- **Performance testing** for async operations and web scraping
+
+### 🚀 Enhanced Components
+- **JD Parser**: spaCy integration with automatic model download and fallback parsing
+- **Knowledge Miner**: Advanced fuzzy matching with long-page penalties  
+- **Email Collector**: Improved authentication and attachment handling
+- **Async Scrapers**: Multi-strategy scraping with better error handling
+
+### 🔧 Developer Experience
+- **Comprehensive documentation** with detailed API examples
+- **Improved CLI tools** with better error messages
+- **Enhanced logging** for debugging and monitoring
+- **Type safety** improvements throughout the codebase
+
 ## 🚀 Features
 
 ### Core Functionality
@@ -12,12 +32,14 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 - **Question Management**: Deduplication, scoring, and organization of generated questions
 
 ### Advanced Features
+- **Enhanced NLP**: spaCy integration with automatic model download and fallback parsing
+- **Fuzzy Matching**: Advanced relevance scoring with rapidfuzz and long-page penalties
+- **Async Web Scraping**: Multi-strategy scraping with aiohttp and Playwright
 - **Sentence Embeddings**: Semantic similarity scoring using MiniLM models
 - **Strategy Pattern**: Pluggable scoring strategies (Heuristic, Embedding, Hybrid)
-- **Async Operations**: Non-blocking I/O for improved performance
 - **Multiple Export Formats**: Markdown, CSV, JSON, and Excel with styling
 - **CLI Interface**: Command-line tools for analysts and automation
-- **Code Quality**: Comprehensive testing and validation
+- **Comprehensive Testing**: 65 tests with 100% pass rate ✅
 - **Structured Logging**: JSON-based logging for monitoring and analytics
 
 ## 📋 Table of Contents
@@ -27,8 +49,9 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [CLI Tools](#cli-tools)
-- [API Reference](#api-reference)
 - [Architecture](#architecture)
+- [Development](#development)
+- [Performance](#performance)
 - [Contributing](#contributing)
 - [Troubleshooting](#troubleshooting)
 
@@ -239,16 +262,18 @@ python scripts/qb_cli.py stats questions.json
 - Rate limiting and error handling
 
 #### 2. JD Parser (`components/jd_parser.py`)
-- Advanced NLP-based parsing using spaCy
-- Entity recognition for company, role, location
-- Skill extraction and confidence scoring
-- Metadata tracking for parsing methods
+- **Enhanced NLP parsing** using spaCy with automatic model download
+- **Entity recognition** for company, role, location with improved accuracy
+- **Skill extraction** with confidence scoring and metadata tracking
+- **Fallback parsing** methods when spaCy is unavailable
+- **Robust location validation** to avoid company-as-location errors
 
 #### 3. Knowledge Miner (`components/knowledge_miner.py`)
-- Web scraping with multiple strategies
-- SerpAPI integration for search results
-- Relevance scoring and content filtering
-- Caching for performance optimization
+- **Multi-strategy web scraping** with aiohttp and Playwright
+- **Enhanced relevance scoring** with fuzzy matching and long-page penalties
+- **SerpAPI integration** with rate limiting and fallback methods
+- **Intelligent caching** for performance optimization
+- **Async operations** with connection pooling and throttling
 
 #### 4. Prompt Engine (`components/prompt_engine.py`)
 - OpenAI GPT-4o integration
@@ -321,32 +346,54 @@ python scripts/qb_cli.py stats questions.json
 
 ## 🔧 Development
 
-### Type Safety
-```bash
-# Run tests
-pytest -q
-
-# Install type stubs
-pip install types-aiofiles pandas-stubs types-openpyxl
-```
-
 ### Testing
+
+The project includes a comprehensive test suite with **65 tests** covering all core components.
+
 ```bash
 # Run all tests
-pytest
+pytest jd_agent/tests/ -v
 
 # Run specific test categories
-pytest test/test_jd_parser.py
-pytest test/test_question_bank.py
+pytest jd_agent/tests/test_email_collector.py -v     # 18 tests
+pytest jd_agent/tests/test_jd_parser.py -v          # 12 tests
+pytest jd_agent/tests/test_knowledge_miner.py -v    # 13 tests
+pytest jd_agent/tests/test_scraper_async.py -v      # 15 tests
+pytest jd_agent/tests/test_enhanced_relevance_scoring.py -v  # 7 tests
+
+# Run tests with coverage
+pytest jd_agent/tests/ --cov=jd_agent --cov-report=html
+```
+
+### Test Coverage
+
+✅ **All 65 tests passing** with comprehensive coverage:
+
+- **EmailCollector**: Gmail integration, authentication, email parsing
+- **JDParser**: Enhanced NLP parsing, spaCy integration, validation  
+- **KnowledgeMiner**: Web scraping, relevance scoring, async operations
+- **Async Scrapers**: Performance testing, error handling, browser automation
+- **Enhanced Scoring**: Fuzzy matching, long-page penalties, credibility scoring
+
+### Type Safety
+```bash
+# Install type stubs
+pip install types-aiofiles pandas-stubs types-openpyxl
+
+# Run type checking
+mypy jd_agent/ --ignore-missing-imports
 ```
 
 ### Code Quality
 ```bash
 # Format code
-black jd_agent/ test/ scripts/
+black jd_agent/ jd_agent/tests/ scripts/
 
 # Lint code
-flake8 jd_agent/ test/ scripts/
+flake8 jd_agent/ jd_agent/tests/ scripts/
+
+# Run linting on tests
+pytest jd_agent/tests/ --flake8
 ```
 
 ## 📈 Performance
@@ -398,9 +445,10 @@ export LOG_LEVEL=DEBUG
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Add tests
-5. Run tests: `pytest`
-6. Submit a pull request
+4. Add tests (maintain 100% test coverage)
+5. Run tests: `pytest jd_agent/tests/ -v`
+6. Ensure all 65 tests pass ✅
+7. Submit a pull request
 
 ### Code Standards
 - Type hints required
@@ -429,6 +477,7 @@ For questions and support:
 
 ---
 
-**Version**: 2.0.0  
+**Version**: 2.1.0  
 **Last Updated**: January 2025  
-**Python Version**: 3.12+ 
+**Python Version**: 3.12+  
+**Test Status**: ✅ 65/65 tests passing 
