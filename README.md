@@ -11,10 +11,18 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 - **Performance testing** for async operations and web scraping
 
 ### 🚀 Enhanced Components
-- **JD Parser**: spaCy integration with automatic model download and fallback parsing
-- **Knowledge Miner**: Advanced fuzzy matching with long-page penalties  
+- **JD Parser**: Provider-aware parsing with spaCy fallback
+  - Accepts both structured dicts and raw `.eml` content
+  - LinkedIn InMail extractor (header `X-LinkedIn-Class: INMAIL`): pulls role, company, parenthetical `(location • work-mode • salary)` tokens
+  - Naukri HTML extractor: pulls bullets under “Job description” and “What this role entail”, infers skills (Python, SQL, Forecasting)
+  - Tightened salary parsing: “salary up to ₹ 50 LPA”, “₹ 50 LPA (max)”, “CTC: ₹ 15 LPA”, NBSP-safe
+  - Skill guardrails: broad patterns + stoplist to avoid UI/location/platform noise
+  - Confidence scoring tweaks: boosts for subject/provider role, slight penalty for platform-only company, bonus when salary+experience present
+  - Convenience: `parse_eml_file(path)`; metadata logs “winning” extractor per field
+- **Knowledge Miner**: Advanced fuzzy matching with long-page penalties; improved query builder (role, top skills, site-specific coverage)
 - **Email Collector**: 7‑day window filtering by default, excludes noisy senders (GitHub/LinkedIn/Naukri alerts), includes starred emails, improved authentication and attachment handling
 - **PDF Exporter**: Formats Python/SQL code blocks, renders bullet points/paragraphs intelligently, includes email-derived info (subject/sender/date) when available, and adds resume improvement tips at the beginning
+- **Email Selector**: Interactive selection; starred prioritized; uses provider-aware JD parsing on full email inputs
 - **Async Scrapers**: Multi-strategy scraping with better error handling
 
 ### 🔧 Developer Experience
@@ -120,7 +128,72 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### 2. Non-interactive pipeline
+### 2. Recommended Interactive Workflow (detailed tutorial)
+
+The interactive mode is the preferred way to use JD Agent. It lets you review and choose emails before parsing.
+
+1) Prepare environment
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp env.example .env   # fill values as needed
+```
+
+2) Set up Gmail access (first run only)
+
+```bash
+python setup/setup_gmail_auth.py
+```
+
+3) Run the interactive flow
+
+```python
+import asyncio
+from jd_agent.utils.config import Config
+from jd_agent.main import JDAgent
+
+async def run():
+    agent = JDAgent(Config())
+    # Fetch up to 20 recent job-related emails (last 7 days), show each and ask to process
+    results = await agent.process_emails_interactively(max_emails=20)
+    print("Summary:", results)
+
+if __name__ == "__main__":
+    asyncio.run(run())
+```
+
+- What happens under the hood:
+  - Collector fetches last 7 days, excludes `notifications@github.com`, `jobalerts-noreply@linkedin.com`, `info@naukri.com`, prioritizes starred.
+  - Selector previews each email; you choose y/n/s.
+  - Parser uses provider-aware logic:
+    - LinkedIn InMail: role/company from “I’m hiring for … at …”; `(location • work-mode • salary)` parsed.
+    - Naukri HTML: bullets under “Job description” and “What this role entail” captured; infers skills from bullets.
+    - Salary rules: “salary up to ₹ 50 LPA”, “₹ 50 LPA (max)”, “CTC: ₹ 15 LPA”, etc.
+    - Skill guardrails and confidence tuning applied.
+  - PDF Exporter generates a well-formatted PDF per JD with code blocks, bullets, email info, and resume tips.
+
+4) Files produced
+
+- PDFs are written to `exports/` (or the configured export dir)
+- Each PDF includes:
+  - Title + metadata; email subject/sender/date when available
+  - Questions organized by difficulty, with Python/SQL code blocks
+  - Resume improvement tips at the start
+
+5) Tips
+
+- Star important emails in Gmail to surface them first.
+- If you have raw `.eml` files, you can parse them directly:
+
+```python
+from jd_agent.components.jd_parser import JDParser
+parser = JDParser()
+jd = parser.parse_eml_file("example_emails/AI Engineer ll Bangalore (Manyata Tech Park).eml")
+```
+
+### 3. Non-interactive pipeline
 
 ```python
 import asyncio
