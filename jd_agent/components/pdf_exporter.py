@@ -6,7 +6,17 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    PageBreak,
+    Preformatted,
+    ListFlowable,
+    ListItem,
+)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
@@ -80,6 +90,31 @@ class PDFExporter:
             spaceAfter=8,
             textColor=colors.gray
         ))
+
+        # Code block style
+        self.styles.add(ParagraphStyle(
+            name='CodeBlock',
+            parent=self.styles['Normal'],
+            fontName='Courier',
+            fontSize=9,
+            leading=12,
+            backColor=colors.whitesmoke,
+            leftIndent=30,
+            rightIndent=10,
+            spaceBefore=6,
+            spaceAfter=12,
+            borderPadding=6,
+        ))
+
+        # Bullet list style (custom name to avoid clash with default 'Bullet')
+        self.styles.add(ParagraphStyle(
+            name='CustomBullet',
+            parent=self.styles['Normal'],
+            fontSize=11,
+            leftIndent=35,
+            spaceBefore=2,
+            spaceAfter=2,
+        ))
     
     def export_questions_to_pdf(self, jd: JobDescription, questions: List[Dict[str, Any]], 
                                metadata: Dict[str, Any]) -> str:
@@ -108,7 +143,7 @@ class PDFExporter:
             story = []
             
             # Add title page
-            story.extend(self._create_title_page(jd, metadata))
+            story.extend(self._create_title_page(jd, metadata, total_questions=len(questions)))
             story.append(PageBreak())
             
             # Add metadata section
@@ -128,7 +163,7 @@ class PDFExporter:
             logger.error(f"Error exporting PDF: {e}")
             raise
     
-    def _create_title_page(self, jd: JobDescription, metadata: Dict[str, Any]) -> List:
+    def _create_title_page(self, jd: JobDescription, metadata: Dict[str, Any], total_questions: int) -> List:
         """Create the title page."""
         story = []
         
@@ -148,8 +183,7 @@ class PDFExporter:
         story.append(Paragraph(generated_info, self.styles['Metadata']))
         
         # Total questions
-        total_questions = len(questions) if 'questions' in locals() else 0
-        questions_info = f"Total Questions: {total_questions}"
+        questions_info = f"Total Questions: {metadata.get('total_questions', total_questions)}"
         story.append(Paragraph(questions_info, self.styles['Metadata']))
         
         story.append(Spacer(1, 40))
@@ -161,6 +195,33 @@ class PDFExporter:
         and behavioral competencies relevant to this role.
         """
         story.append(Paragraph(summary, self.styles['Normal']))
+
+        # Information extracted from email (optional)
+        email_info_items = []
+        email_subject = metadata.get('email_subject')
+        email_sender = metadata.get('email_sender')
+        email_date = metadata.get('email_date')
+        # Consider information important if subject or sender exist and not Unknown
+        if any([email_subject, email_sender, email_date]) and \
+           any([v and str(v).lower() != 'unknown' for v in [email_subject, email_sender]]):
+            story.append(Spacer(1, 20))
+            story.append(Paragraph("Information from Email", self.styles['SectionHeader']))
+            bullet_items = []
+            if email_subject and str(email_subject).strip():
+                bullet_items.append(Paragraph(f"Subject: {email_subject}", self.styles['CustomBullet']))
+            if email_sender and str(email_sender).strip():
+                bullet_items.append(Paragraph(f"Sender: {email_sender}", self.styles['CustomBullet']))
+            if email_date and str(email_date).strip():
+                bullet_items.append(Paragraph(f"Date: {email_date}", self.styles['CustomBullet']))
+            if bullet_items:
+                story.append(ListFlowable([ListItem(i) for i in bullet_items], bulletType='bullet', leftIndent=20))
+
+        # Resume improvement tips
+        story.append(Spacer(1, 16))
+        story.append(Paragraph("Resume Improvement Tips", self.styles['SectionHeader']))
+        tips = self._generate_resume_tips(jd)
+        tip_items = [Paragraph(t, self.styles['CustomBullet']) for t in tips]
+        story.append(ListFlowable([ListItem(i) for i in tip_items], bulletType='bullet', leftIndent=20))
         
         return story
     
@@ -256,9 +317,11 @@ class PDFExporter:
         question_text = f"<b>{question_num}.</b> {question.get('question', 'No question text')}"
         story.append(Paragraph(question_text, self.styles['Question']))
         
-        # Answer
+        # Answer and code formatting
         answer_text = question.get('answer', 'No answer provided')
-        story.append(Paragraph(answer_text, self.styles['Answer']))
+        q_text = question.get('question', '')
+        # Parse and render question/answer content including code blocks and bullet lists
+        story.extend(self._render_text_with_code_and_lists(answer_text))
         
         # Question metadata
         category = question.get('category', 'Unknown')
@@ -271,3 +334,82 @@ class PDFExporter:
         story.append(Spacer(1, 10))
         
         return story 
+
+    # ---------- Helpers for content rendering ----------
+    def _render_text_with_code_and_lists(self, text: str) -> List:
+        """Render text that may contain fenced code blocks and bullet lists."""
+        import re
+        flowables: List[Any] = []
+
+        if not text:
+            return [Paragraph('No answer provided', self.styles['Answer'])]
+
+        # Split text into segments by fenced code blocks ```lang\n...```
+        code_block_pattern = re.compile(r"```\s*(\w+)?\s*\n([\s\S]*?)\n```", re.MULTILINE)
+        last_index = 0
+        for match in code_block_pattern.finditer(text):
+            # Preceding text segment
+            pre_text = text[last_index:match.start()].strip()
+            if pre_text:
+                flowables.extend(self._render_plain_or_bulleted_text(pre_text))
+
+            lang = (match.group(1) or '').lower().strip()
+            code = match.group(2)
+            # Label for code
+            label = 'Code'
+            if lang == 'python':
+                label = 'Python Code'
+            elif lang in ('sql', 'pgsql', 'postgresql', 'mysql'):
+                label = 'SQL Code'
+            flowables.append(Paragraph(label + ':', self.styles['Metadata']))
+            flowables.append(Preformatted(code, self.styles['CodeBlock']))
+
+            last_index = match.end()
+
+        # Trailing text after last code block
+        trailing = text[last_index:].strip()
+        if trailing:
+            flowables.extend(self._render_plain_or_bulleted_text(trailing))
+
+        return flowables
+
+    def _render_plain_or_bulleted_text(self, text: str) -> List:
+        """Render text either as a paragraph or as a bullet list if it looks like one."""
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        bullet_like = [ln for ln in lines if ln.startswith(('- ', '* ', '• ')) or self._looks_numbered_bullet(ln)]
+        # If majority of lines are bullet-like, render as bullets
+        if lines and len(bullet_like) >= max(2, int(0.6 * len(lines))):
+            items: List[Any] = []
+            for ln in lines:
+                if ln.startswith(('- ', '* ', '• ')):
+                    content = ln[2:].strip()
+                elif self._looks_numbered_bullet(ln):
+                    # remove leading number + dot
+                    content = ' '.join(ln.split(' ')[1:]).strip()
+                else:
+                    content = ln
+                items.append(ListItem(Paragraph(content, self.styles['CustomBullet'])))
+            return [ListFlowable(items, bulletType='bullet', leftIndent=20)]
+        # Otherwise render as paragraph with Answer style
+        return [Paragraph(text, self.styles['Answer'])]
+
+    def _looks_numbered_bullet(self, line: str) -> bool:
+        import re
+        return re.match(r"^\d+\.|^\(\d+\)", line) is not None
+
+    def _generate_resume_tips(self, jd: JobDescription) -> List[str]:
+        """Generate resume improvement tips based on the JD."""
+        tips: List[str] = []
+        primary_role = jd.role or 'the role'
+        skills = jd.skills or []
+        top_skills = ', '.join(skills[:5]) if skills else ''
+        if top_skills:
+            tips.append(f"Mirror key keywords for {primary_role} in your summary and skills (e.g., {top_skills}).")
+        else:
+            tips.append(f"Mirror the top keywords for {primary_role} in your summary and skills section.")
+        tips.append("Quantify achievements (e.g., reduced cost by 20%, processed 1M+ records, trained model to 92% AUC).")
+        tips.append("Highlight 2–3 recent projects relevant to the JD; include links to GitHub or portfolio.")
+        tips.append("Keep formatting ATS-friendly: simple headings, standard fonts, no tables or images for core content.")
+        tips.append("Prioritize recent experience and skills from the JD; keep resume to 1–2 pages.")
+        tips.append("Add a concise tech stack line per role (Python, SQL, AWS, Spark, Airflow, Docker, etc.).")
+        return tips

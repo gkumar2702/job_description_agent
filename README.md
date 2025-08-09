@@ -13,7 +13,8 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 ### 🚀 Enhanced Components
 - **JD Parser**: spaCy integration with automatic model download and fallback parsing
 - **Knowledge Miner**: Advanced fuzzy matching with long-page penalties  
-- **Email Collector**: Improved authentication and attachment handling
+- **Email Collector**: 7‑day window filtering by default, excludes noisy senders (GitHub/LinkedIn/Naukri alerts), includes starred emails, improved authentication and attachment handling
+- **PDF Exporter**: Formats Python/SQL code blocks, renders bullet points/paragraphs intelligently, includes email-derived info (subject/sender/date) when available, and adds resume improvement tips at the beginning
 - **Async Scrapers**: Multi-strategy scraping with better error handling
 
 ### 🔧 Developer Experience
@@ -101,22 +102,42 @@ A comprehensive AI-powered system for automatically collecting, parsing, and gen
 
 ## 🚀 Quick Start
 
-### 1. Basic Usage
+### 1. Basic Usage (interactive email flow)
 
 ```python
+import asyncio
+from jd_agent.utils.config import Config
 from jd_agent.main import JDAgent
 
-# Initialize the agent
-agent = JDAgent()
+async def main():
+    config = Config()
+    agent = JDAgent(config)
+    # Interactively select from last 7 days of job emails (starred prioritized)
+    results = await agent.process_emails_interactively(max_emails=20)
+    print(results)
 
-# Process job descriptions from Gmail
-results = agent.process_job_descriptions()
-
-# Generate interview questions
-questions = agent.generate_questions(results)
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-### 2. CLI Usage
+### 2. Non-interactive pipeline
+
+```python
+import asyncio
+from jd_agent.utils.config import Config
+from jd_agent.main import JDAgent
+
+async def main():
+    agent = JDAgent(Config())
+    # Process and generate questions end-to-end
+    results = await agent.run_full_pipeline(max_emails=10)
+    print(results)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### 3. CLI Usage
 
 ```bash
 # Deduplicate questions
@@ -339,6 +360,21 @@ python scripts/qb_cli.py stats questions.json
 - Generation timestamps
 
 ### Excel
+### PDF (default)
+- Nicely formatted with title page and metadata
+- Python/SQL code blocks shown in monospaced blocks
+- Bullet point answers rendered as lists; paragraphs otherwise
+- Email information (subject/sender/date) displayed when provided
+- Resume improvement tips at the start
+
+Tip: Include fenced code blocks in answers using triple backticks for best rendering, for example:
+
+```text
+```python
+def add(a: int, b: int) -> int:
+    return a + b
+```
+```
 - Styled headers with blue background
 - Auto-filter for data exploration
 - Metadata sheet with job details
@@ -385,6 +421,16 @@ mypy jd_agent/ --ignore-missing-imports
 ```
 
 ### Code Quality
+### Continuous Integration (GitHub Actions)
+This repository is CI-ready. A workflow runs tests on every push and pull request.
+
+1. Ensure your repo has GitHub Actions enabled
+2. The workflow file lives at `.github/workflows/ci.yml`
+3. It sets up Python, installs dependencies, and runs `pytest`
+
+Add a status badge to the top of this README (replace OWNER/REPO):
+
+`![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)`
 ```bash
 # Format code
 black jd_agent/ jd_agent/tests/ scripts/

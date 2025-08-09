@@ -20,12 +20,13 @@ class EmailSelector:
         self.email_collector = email_collector
         self.jd_parser = jd_parser
     
-    async def fetch_and_display_emails(self, max_results: int = 20) -> List[Dict[str, Any]]:
+    async def fetch_and_display_emails(self, max_results: int = 20, days: int = 7) -> List[Dict[str, Any]]:
         """
         Fetch emails and display them for user selection.
         
         Args:
             max_results: Maximum number of emails to fetch
+            days: Only include emails from the last N days (default 7)
             
         Returns:
             List[Dict[str, Any]]: Selected emails for processing
@@ -33,12 +34,18 @@ class EmailSelector:
         print("🔍 Fetching job description emails...")
         
         # Fetch emails
-        emails = self.email_collector.fetch_job_description_emails(max_results)
+        emails = self.email_collector.fetch_job_description_emails(max_results=max_results, days=days)
         
         if not emails:
             print("❌ No job description emails found!")
             return []
         
+        # Sort: starred first, then by date desc if present
+        try:
+            emails.sort(key=lambda e: (not e.get('starred', False), e.get('date', '')), reverse=False)
+        except Exception:
+            pass
+
         print(f"\n📧 Found {len(emails)} potential job description emails:")
         print("=" * 80)
         
@@ -47,7 +54,8 @@ class EmailSelector:
         
         for i, email in enumerate(emails, 1):
             subject = email.get('subject', 'No Subject')
-            sender = email.get('from', 'Unknown Sender')
+            # Collector uses 'sender' key
+            sender = email.get('sender', email.get('from', 'Unknown Sender'))
             date = email.get('date', 'Unknown Date')
             
             # Extract basic info for preview

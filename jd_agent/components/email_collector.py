@@ -229,12 +229,13 @@ class EmailCollector:
             attachments.extend(extracted)
         return extracted
     
-    def fetch_job_description_emails(self, max_results: int = 10) -> List[Dict[str, Any]]:
+    def fetch_job_description_emails(self, max_results: int = 10, days: int = 7) -> List[Dict[str, Any]]:
         """
         Fetch individual job description emails.
         
         Args:
             max_results: Maximum number of emails to fetch
+            days: Only fetch emails from the last N days (default 7)
             
         Returns:
             List of email data
@@ -243,8 +244,8 @@ class EmailCollector:
             self._authenticate()
         
         try:
-            # Build enhanced search query
-            search_query = self._build_enhanced_search_query()
+            # Build enhanced search query scoped to the last `days`
+            search_query = self._build_enhanced_search_query(days=days)
             
             # Fetch messages directly
             results = self.service.users().messages().list(
@@ -313,12 +314,13 @@ class EmailCollector:
             logger.error(f"Error extracting job description from email: {e}")
             return None
 
-    def fetch_job_description_threads(self, max_results: int = 50) -> List[Dict[str, Any]]:
+    def fetch_job_description_threads(self, max_results: int = 50, days: int = 7) -> List[Dict[str, Any]]:
         """
         Fetch email threads that might contain job descriptions.
         
         Args:
             max_results: Maximum number of threads to fetch
+            days: Only fetch threads with messages from the last N days (default 7)
             
         Returns:
             List of email thread data
@@ -327,8 +329,8 @@ class EmailCollector:
             self._authenticate()
         
         try:
-            # Build enhanced search query
-            search_query = self._build_enhanced_search_query()
+            # Build enhanced search query scoped to the last `days`
+            search_query = self._build_enhanced_search_query(days=days)
             
             # Fetch threads
             results = self.service.users().threads().list(
@@ -371,13 +373,19 @@ class EmailCollector:
             logger.error(f"Error fetching email threads: {e}")
             return []
     
-    def _build_enhanced_search_query(self) -> str:
-        """Build a comprehensive search query for job description emails."""
-        query_parts = []
+    def _build_enhanced_search_query(self, days: int = 7) -> str:
+        """Build a comprehensive search query for job description emails.
+
+        The query combines broad job-related criteria with a hard time window.
+
+        Args:
+            days: Restrict results to emails newer than this many days
+        """
+        or_parts = []
         
         # Domain-based search (more inclusive)
         domain_queries = [f"from:{domain}" for domain in ALLOWED_DOMAINS]
-        query_parts.append(f"({' OR '.join(domain_queries)})")
+        or_parts.append(f"({' OR '.join(domain_queries)})")
         
         # Subject-based search for job-related terms
         subject_keywords = [
@@ -386,20 +394,24 @@ class EmailCollector:
             'Developer', 'Lead', 'Senior', 'Remote', 'Hybrid'
         ]
         subject_queries = [f'subject:"{keyword}"' for keyword in subject_keywords]
-        query_parts.append(f"({' OR '.join(subject_queries)})")
+        or_parts.append(f"({' OR '.join(subject_queries)})")
         
         # Sender-based search for LinkedIn and job portals
         sender_queries = [
             'from:linkedin.com', 'from:naukri.com', 'from:indeed.com',
             'from:inmail-hit-reply@linkedin.com', 'from:mailb.linkedin.com'
         ]
-        query_parts.append(f"({' OR '.join(sender_queries)})")
+        or_parts.append(f"({' OR '.join(sender_queries)})")
         
-        # Time-based search (last 90 days to catch more emails)
-        query_parts.append("newer_than:90d")
+        # Compose the OR criteria into a single group
+        or_criteria = " OR ".join(or_parts)
+
+        # Time-based search (last `days` days). Combine with AND to enforce the window.
+        time_clause = f"newer_than:{days}d" if days and days > 0 else ""
         
-        # Combine all parts with OR instead of AND for more inclusive search
-        return " OR ".join(query_parts)
+        if time_clause:
+            return f"({or_criteria}) {time_clause}"
+        return f"({or_criteria})"
     
     def _process_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process a Gmail message and extract relevant information."""

@@ -62,4 +62,59 @@ class TestPDFExporter:
         # Basic size check: non-empty PDF, typically > 1KB
         assert os.path.getsize(pdf_path) > 1024
 
+    def test_export_questions_formats_code_and_bullets_and_email(self, exporter: PDFExporter, sample_jd: JobDescription) -> None:
+        questions = [
+            {
+                'difficulty': 'easy',
+                'question': 'Write a Python function to add two numbers',
+                'answer': 'Use a simple function.\n```python\ndef add(a: int, b: int) -> int:\n    return a + b\n```',
+                'category': 'Python',
+                'skills': ['Python']
+            },
+            {
+                'difficulty': 'medium',
+                'question': 'Write an SQL to find top 5 customers by revenue',
+                'answer': 'You can aggregate and sort.\n```sql\nSELECT customer_id, SUM(amount) AS revenue\nFROM orders\nGROUP BY customer_id\nORDER BY revenue DESC\nLIMIT 5;\n```',
+                'category': 'SQL',
+                'skills': ['SQL']
+            },
+            {
+                'difficulty': 'easy',
+                'question': 'List steps for model evaluation',
+                'answer': '- Split data into train/test\n- Choose metrics (AUC/Accuracy/F1)\n- Cross-validate\n- Analyze errors',
+                'category': 'ML',
+                'skills': ['ML']
+            },
+        ]
+        metadata = {
+            'email_subject': 'Hiring: Data Scientist - Python, SQL',
+            'email_sender': 'recruiter@example.com',
+            'email_date': '2025-01-01',
+            'generated_by': 'unit-test'
+        }
+
+        pdf_path = exporter.export_questions_to_pdf(sample_jd, questions, metadata)
+        assert os.path.exists(pdf_path)
+        # With code blocks and lists, size should be reasonably larger
+        assert os.path.getsize(pdf_path) > 2048
+
+    def test_export_questions_handles_missing_email_info(self, exporter: PDFExporter, sample_jd: JobDescription) -> None:
+        questions = [
+            {
+                'difficulty': 'easy',
+                'question': 'Explain regularization',
+                'answer': 'L1 and L2 regularization help prevent overfitting by penalizing large weights.',
+                'category': 'ML',
+                'skills': ['ML']
+            }
+        ]
+        metadata = {
+            # Intentionally omit email_* to ensure section is skipped gracefully
+            'generated_by': 'unit-test'
+        }
+
+        pdf_path = exporter.export_questions_to_pdf(sample_jd, questions, metadata)
+        assert os.path.exists(pdf_path)
+        assert os.path.getsize(pdf_path) > 1024
+
 

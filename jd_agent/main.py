@@ -110,7 +110,7 @@ class JDAgent:
                     try:
                         metadata = {
                             'email_subject': email_data.get('subject', 'Unknown'),
-                            'email_sender': email_data.get('from', 'Unknown'),
+                            'email_sender': email_data.get('sender', email_data.get('from', 'Unknown')),
                             'email_date': email_data.get('date', 'Unknown'),
                             'total_questions': len(questions),
                             'questions_by_difficulty': self._get_questions_by_difficulty(questions),
