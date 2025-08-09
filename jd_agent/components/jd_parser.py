@@ -11,9 +11,14 @@ from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Temporarily disable spaCy due to numpy compatibility issues
-SPACY_AVAILABLE = False
-logger.warning("spaCy disabled. Using fallback parsing methods.")
+# Dynamic spaCy availability check
+try:
+    import spacy  # type: ignore
+    SPACY_AVAILABLE = True
+except Exception:
+    spacy = None  # type: ignore
+    SPACY_AVAILABLE = False
+    logger.warning("spaCy not available. Using fallback parsing methods.")
 
 
 @dataclass
@@ -51,8 +56,16 @@ class JDParser:
                 self.nlp = spacy.load("en_core_web_sm")
                 logger.info("Loaded spaCy model successfully")
             except OSError:
-                logger.warning("spaCy model not found. Please run: python -m spacy download en_core_web_sm")
-                self.nlp = None
+                # Attempt on-the-fly download of the model
+                try:
+                    from spacy.cli import download as spacy_download  # type: ignore
+                    logger.info("Downloading spaCy model en_core_web_sm...")
+                    spacy_download("en_core_web_sm")
+                    self.nlp = spacy.load("en_core_web_sm")
+                    logger.info("Downloaded and loaded spaCy model successfully")
+                except Exception:
+                    logger.warning("spaCy model not found and auto-download failed. Please run: python -m spacy download en_core_web_sm")
+                    self.nlp = None
         else:
             self.nlp = None
             logger.info("Using fallback parsing methods without spaCy")
@@ -267,7 +280,7 @@ class JDParser:
             # Extract information with enhanced methods
             company = self._extract_company_enhanced(text, subject, sender)
             role = self._extract_role_enhanced(text, subject)
-            location = self._extract_location_enhanced(text, subject)
+            location = self._extract_location_enhanced(text, subject, company)
             experience_years = self._extract_experience_enhanced(text, subject)
             skills = self._extract_skills_enhanced(text)
             salary_lpa = self._extract_salary_enhanced(text)
@@ -477,6 +490,9 @@ class JDParser:
         
         # Remove trailing punctuation
         company = re.sub(r'[.,;:!?]+$', '', company)
+
+        # Trim trailing pronouns or sentence starters accidentally captured
+        company = re.sub(r'\b(?:We|I|You|They|He|She|It)\b.*$', '', company, flags=re.IGNORECASE).strip()
         
         return company
     
@@ -577,7 +593,7 @@ class JDParser:
         
         return ""
     
-    def _extract_location_enhanced(self, text: str, subject: str) -> str:
+    def _extract_location_enhanced(self, text: str, subject: str, company: Optional[str] = None) -> str:
         """
         Enhanced location extraction.
         
@@ -588,6 +604,18 @@ class JDParser:
         Returns:
             str: Job location or empty string
         """
+        # If spaCy is available, prefer NER for GPE entities
+        if self.nlp:
+            try:
+                doc = self.nlp(text)
+                for ent in doc.ents:
+                    if ent.label_ == "GPE" and len(ent.text.strip()) > 2:
+                        candidate = ent.text.strip()
+                        if self._is_valid_location_candidate(candidate, company):
+                            return candidate
+            except Exception:
+                pass
+
         # Strategy 1: Look for remote/hybrid indicators first
         remote_patterns = [
             r'\b(remote|hybrid|onsite|in-office|work from home|wfh)\b',
@@ -597,7 +625,9 @@ class JDParser:
         for pattern in remote_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             if matches:
-                return matches[0].title()
+                candidate = matches[0].title()
+                if self._is_valid_location_candidate(candidate, company):
+                    return candidate
         
         # Strategy 2: Look for LinkedIn specific location patterns
         # Pattern: "(Bangalore • hybrid 2 days on‑site • salary up to ₹ 50 LPA)"
@@ -605,7 +635,11 @@ class JDParser:
         matches = re.findall(linkedin_location_pattern, text, re.IGNORECASE)
         if matches:
             location = matches[0].strip()
-            if len(location) > 2 and location.lower() not in ['manyata', 'tech', 'park']:
+            if (
+                len(location) > 2
+                and location.lower() not in ['manyata', 'tech', 'park']
+                and self._is_valid_location_candidate(location, company)
+            ):
                 return location
         
         # Strategy 2.1: Look for location in parentheses with better filtering
@@ -614,7 +648,11 @@ class JDParser:
         if matches:
             location = matches[0].strip()
             # Filter out common non-location words
-            if len(location) > 2 and location.lower() not in ['manyata', 'tech', 'park', 'ust', 'www']:
+            if (
+                len(location) > 2
+                and location.lower() not in ['manyata', 'tech', 'park', 'ust', 'www']
+                and self._is_valid_location_candidate(location, company)
+            ):
                 return location
         
         # Strategy 3: Look for location in subject line
@@ -622,7 +660,7 @@ class JDParser:
         matches = re.findall(subject_location_pattern, subject, re.IGNORECASE)
         if matches:
             location = matches[0].strip()
-            if len(location) > 2:
+            if len(location) > 2 and self._is_valid_location_candidate(location, company):
                 return location
         
         # Strategy 4: Use enhanced location patterns
@@ -630,17 +668,37 @@ class JDParser:
             matches = re.findall(pattern, text, re.IGNORECASE)
             if matches:
                 location = matches[0].strip()
-                if len(location) > 2:
+                if len(location) > 2 and self._is_valid_location_candidate(location, company):
                     return location
         
-        # Strategy 5: Use spaCy NER
-        if self.nlp:
-            doc = self.nlp(text)
-            loc_entities = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
-            if loc_entities:
-                return loc_entities[0]
+        # Strategy 5: Use spaCy NER (secondary) on subject if not found
+        if self.nlp and subject:
+            try:
+                doc = self.nlp(subject)
+                for ent in doc.ents:
+                    if ent.label_ == "GPE" and len(ent.text.strip()) > 2:
+                        candidate = ent.text.strip()
+                        if self._is_valid_location_candidate(candidate, company):
+                            return candidate
+            except Exception:
+                pass
         
         return ""
+
+    def _is_valid_location_candidate(self, candidate: str, company: Optional[str] = None) -> bool:
+        """Filter out common false positives for location extraction."""
+        if not candidate:
+            return False
+        bad_tokens = {"AWS", "GCP", "Azure", "SQL", "Python"}
+        # If entirely composed of comma-separated known acronyms/skills, reject
+        parts = [p.strip() for p in candidate.split(',') if p.strip()]
+        if all(p in bad_tokens or (len(p) <= 4 and p.isupper()) for p in parts):
+            return False
+        if company and candidate.lower() == company.lower():
+            return False
+        if company and candidate.lower() in company.lower():
+            return False
+        return True
     
     def _extract_experience_enhanced(self, text: str, subject: Optional[str] = None) -> int:
         """
