@@ -131,13 +131,13 @@ class JDParser:
             # Real email patterns from examples
             r'Exp\s*[-–]\s*(\d+)\+?\s*Years?',  # "Exp - 5+ Years"
             r'(\d+)\+?\s*yrs?\s+experience',  # "5+ yrs experience"
-            r'(\d+)[\s-–]+(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)',
-            r'(?:experience|exp)\s+(?:of\s+)?(\d+)[\s-–]+(?:years?|yrs?)',
-            r'(\d+)[\s-–]+(?:years?|yrs?)\s+(?:in\s+)?(?:the\s+)?(?:field|industry|role|position)',
-            r'(?:minimum|at least|minimum of)\s+(\d+)[\s-–]+(?:years?|yrs?)',
-            r'(\d+)[\s-–]+(?:years?|yrs?)\s+(?:minimum|required|preferred)',
-            r'(\d+)[\s-–](\d+)\s+years?',  # "7–9 years"
-            r'If you have\s+(\d+)[\s-–](\d+)\s+years?',  # "If you have 7–9 years"
+            r'(\d+)[\s\-–]+(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)',
+            r'(?:experience|exp)\s+(?:of\s+)?(\d+)[\s\-–]+(?:years?|yrs?)',
+            r'(\d+)[\s\-–]+(?:years?|yrs?)\s+(?:in\s+)?(?:the\s+)?(?:field|industry|role|position)',
+            r'(?:minimum|at least|minimum of)\s+(\d+)[\s\-–]+(?:years?|yrs?)',
+            r'(\d+)[\s\-–]+(?:years?|yrs?)\s+(?:minimum|required|preferred)',
+            r'(\d+)[\s\-–](\d+)\s+years?',  # "7–9 years"
+            r'If you have\s+(\d+)[\s\-–](\d+)\s+years?',  # "If you have 7–9 years"
             r'Overall\s+(\d+)\+?\s*yrs?\s+experience',  # "Overall 5+ yrs experience"
         ]
         
@@ -268,10 +268,21 @@ class JDParser:
             company = self._extract_company_enhanced(text, subject, sender)
             role = self._extract_role_enhanced(text, subject)
             location = self._extract_location_enhanced(text, subject)
-            experience_years = self._extract_experience_enhanced(text)
+            experience_years = self._extract_experience_enhanced(text, subject)
             skills = self._extract_skills_enhanced(text)
             salary_lpa = self._extract_salary_enhanced(text)
             
+            # Subject-line fallback: if company or role still missing, try stronger subject parsing
+            fallbacks_used: List[str] = []
+            if (not company or not role) and subject:
+                subj_company, subj_role = self._extract_company_role_from_subject(subject)
+                if not company and subj_company:
+                    company = subj_company
+                    fallbacks_used.append('company_from_subject_pair')
+                if not role and subj_role:
+                    role = subj_role
+                    fallbacks_used.append('role_from_subject_pair')
+
             # Calculate confidence score
             confidence_score = self._calculate_confidence_score(company, role, location, experience_years, skills)
             
@@ -299,7 +310,8 @@ class JDParser:
                 'parsing_timestamp': datetime.now().isoformat(),
                 'text_length': len(text),
                 'subject_length': len(subject),
-                'body_length': len(body)
+                'body_length': len(body),
+                'fallbacks_used': fallbacks_used,
             }
             
             return JobDescription(
@@ -630,19 +642,42 @@ class JDParser:
         
         return ""
     
-    def _extract_experience_enhanced(self, text: str) -> int:
+    def _extract_experience_enhanced(self, text: str, subject: Optional[str] = None) -> int:
         """
         Enhanced experience extraction.
         
         Args:
             text: Job description text
+            subject: Optional email subject
             
         Returns:
             int: Years of experience or 0
         """
+        # Strategy 0: Try to parse years from the subject line first
+        if subject:
+            try:
+                subj_patterns = [
+                    r'(\d+)[\s\-–]+(\d+)\s+(?:years?|yrs?)',  # 3-5 years
+                    r'(\d+)\+?\s*(?:years?|yrs?)',               # 5+ years
+                    r'Exp\s*[-–]\s*(\d+)\+?\s*(?:Years?|yrs?)', # Exp - 5 Years
+                    r'(\d+)\s*(?:to|and)\s*(\d+)\s+(?:years?|yrs?)',  # 3 to 5 years
+                ]
+                for pattern in subj_patterns:
+                    matches = re.findall(pattern, subject, re.IGNORECASE)
+                    if matches:
+                        value = matches[0]
+                        if isinstance(value, tuple):
+                            min_years = int(value[0])
+                            max_years = int(value[1]) if value[1] else min_years
+                            return (min_years + max_years) // 2
+                        else:
+                            return int(value)
+            except Exception:
+                pass
+
         # Strategy 1: Look for LinkedIn specific patterns
         # Pattern: "If you have 7‑9 years in data‑science/ML research"
-        linkedin_pattern = r'(?:If you have|with|experience of)\s+(\d+)[\s‑-]+(\d+)?\s+(?:years?|yrs?)(?:\s+in|\s+of|\s+with)'
+        linkedin_pattern = r'(?:If you have|with|experience of)\s+(\d+)(?:\s|\u2011|\-)+(\d+)?\s+(?:years?|yrs?)(?:\s+in|\s+of|\s+with)'
         matches = re.findall(linkedin_pattern, text, re.IGNORECASE)
         if matches:
             try:
@@ -664,7 +699,7 @@ class JDParser:
         
         # Strategy 2: Look for Naukri specific patterns
         # Pattern: "3‑8 years of hands-on experience"
-        naukri_pattern = r'(\d+)[\s‑-]+(\d+)?\s+(?:years?|yrs?)\s+(?:of\s+)?(?:hands-on\s+)?experience'
+        naukri_pattern = r'(\d+)(?:\s|\u2011|\-)+(\d+)?\s+(?:years?|yrs?)\s+(?:of\s+)?(?:hands-on\s+)?experience'
         matches = re.findall(naukri_pattern, text, re.IGNORECASE)
         if matches:
             try:
@@ -716,6 +751,56 @@ class JDParser:
                 return years
         
         return 0
+
+    def _extract_company_role_from_subject(self, subject: str) -> Tuple[str, str]:
+        """Extract a (company, role) pair from the subject line.
+        Returns empty strings if not found.
+        """
+        if not subject:
+            return "", ""
+
+        candidate_pairs: List[Tuple[str, str]] = []
+
+        # Pattern 1: Company - Role or Company: Role
+        pattern_sep = r'^\s*([A-Z][\w&.,\-\s]+?)\s*[:\-\|]\s*([A-Z][\w&.,\-\s]+?)\s*$'
+        m = re.findall(pattern_sep, subject)
+        if m:
+            candidate_pairs.append((m[0][0], m[0][1]))
+
+        # Pattern 2: Hiring for Role at Company
+        pattern_hiring_at = r'hiring for\s+(?:an?\s+)?([A-Z][A-Za-z\s&./\-]+?)\s+at\s+([A-Z][A-Za-z\s&.,\-]+)'
+        m = re.findall(pattern_hiring_at, subject, re.IGNORECASE)
+        if m:
+            candidate_pairs.append((m[0][1], m[0][0]))  # (company, role)
+
+        # Pattern 3: Company is hiring for Role
+        pattern_company_is_hiring = r'([A-Z][\w\s&.,\-]+?)\s+is\s+hiring\s+for\s+([A-Z][\w\s&.,\-]+)'
+        m = re.findall(pattern_company_is_hiring, subject, re.IGNORECASE)
+        if m:
+            candidate_pairs.append((m[0][0], m[0][1]))
+
+        # Pattern 4: Opening: Role at Company
+        pattern_opening = r'Opening\s*[:\-]\s*([A-Z][\w\s&.,\-]+)\s+at\s+([A-Z][\w\s&.,\-]+)'
+        m = re.findall(pattern_opening, subject, re.IGNORECASE)
+        if m:
+            candidate_pairs.append((m[0][1], m[0][0]))
+
+        # Pattern 5: Role at Company
+        pattern_role_at_company = r'([A-Z][\w\s&.,\-]+?)\s+at\s+([A-Z][\w\s&.,\-]+)'
+        m = re.findall(pattern_role_at_company, subject)
+        if m:
+            # Disambiguate which is role vs company: prefer role keywords in first part
+            candidate_pairs.append((m[0][1], m[0][0]))
+
+        # Validate and clean
+        for company_raw, role_raw in candidate_pairs:
+            company_clean = self._clean_company_name(company_raw)
+            role_clean = role_raw.strip().rstrip(' .,:;')
+            if self._is_valid_company(company_clean) and len(role_clean) >= 3:
+                return company_clean, role_clean
+
+        # If none validated, return empty
+        return "", ""
     
     def _extract_skills_enhanced(self, text: str) -> List[str]:
         """
