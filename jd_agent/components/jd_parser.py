@@ -604,6 +604,13 @@ class JDParser:
         Returns:
             str: Job location or empty string
         """
+        # Strategy 0: Explicit key before NER
+        key_loc = re.findall(r"Location\s*[:\-]\s*([A-Z][A-Za-z\s]+,\s*[A-Z]{2})", text)
+        if key_loc:
+            candidate = key_loc[0].strip()
+            if self._is_valid_location_candidate(candidate, company):
+                return candidate
+
         # If spaCy is available, prefer NER for GPE entities
         if self.nlp:
             try:
@@ -730,6 +737,16 @@ class JDParser:
                             return (min_years + max_years) // 2
                         else:
                             return int(value)
+            except Exception:
+                pass
+
+        # Strategy 0.5: Simple "5+ years" pattern
+        simple_plus_pattern = r'(\d+)\+?\s*(?:years?|yrs?)'
+        matches = re.findall(simple_plus_pattern, text, re.IGNORECASE)
+        if matches:
+            try:
+                years = int(matches[0])
+                return years
             except Exception:
                 pass
 
@@ -1082,15 +1099,29 @@ class JDParser:
                 return 'subject_line'
             else:
                 return 'regex_patterns'
-        
-        elif field == 'location':
-            if self.nlp:
-                return 'spacy_ner'
-            else:
-                return 'regex_patterns'
-        
-        else:
-            return 'regex_patterns'
+
+    # Backward-compatible simple extractors for tests expecting these names
+    def _extract_company(self, text: str) -> str:
+        return self._extract_company_enhanced(text, subject="", sender="")
+
+    def _extract_role(self, text: str) -> str:
+        return self._extract_role_enhanced(text, subject="")
+
+    def _extract_location(self, text: str) -> str:
+        # No subject/company context in legacy call
+        return self._extract_location_enhanced(text, subject="", company=None)
+
+    def _extract_experience(self, text: str) -> int:
+        return self._extract_experience_enhanced(text, subject=None)
+
+    def _extract_skills(self, text: str) -> List[str]:
+        return self._extract_skills_enhanced(text)
+
+    def _normalize_question(self, question: str) -> str:
+        q = re.sub(r"\s+", " ", question).strip().lower()
+        # Remove trailing question mark
+        q = q[:-1] if q.endswith('?') else q
+        return q
     
     def validate_jd(self, jd: JobDescription) -> bool:
         """

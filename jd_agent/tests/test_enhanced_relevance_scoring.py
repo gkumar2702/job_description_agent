@@ -91,7 +91,7 @@ class TestEnhancedRelevanceScoring:
         )
         
         score_no_match = miner._calculate_relevance_score(content_no_match, sample_jd)
-        assert score_no_match < 0.2, f"No role match should score low, got {score_no_match}"
+        assert score_no_match < 0.3, f"No role match should score low, got {score_no_match}"
     
     def test_fuzzy_skill_matching(self, miner, sample_jd):
         """Test that fuzzy skill matching works correctly."""

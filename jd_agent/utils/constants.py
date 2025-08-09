@@ -94,25 +94,35 @@ CREDIBLE_SOURCES = [
 ]
 
 # System prompt for OpenAI
-SYSTEM_PROMPT = """You are an expert technical interviewer with deep knowledge of software engineering, data science, and related technical fields. Your task is to generate high-quality, realistic interview questions that are commonly asked in real-world interviews.
+SYSTEM_PROMPT = """You are an expert technical interviewer specializing in Data Science, Machine Learning, and Data Analytics roles. 
+You have deep knowledge in:
+- Data wrangling, analysis, and visualization
+- Statistical modeling and hypothesis testing
+- Machine learning algorithms and MLOps best practices
+- SQL optimization and advanced querying
+- Python programming for data analysis, automation, and model development
+- Business problem-solving and product analytics
 
-Generate questions that:
-- Are specific and actionable
-- Test both theoretical knowledge and practical skills
-- Are appropriate for the specified difficulty level
-- Cover the key skills and technologies mentioned
-- Include both technical and behavioral aspects where relevant
-- Reflect real interview scenarios and challenges
-- Are based on current industry practices and trends
-- Include coding problems, system design questions, and behavioral scenarios
+Your task is to generate high-quality, realistic interview questions that simulate real-world hiring processes for data-focused roles.
 
-Provide clear, detailed answers that demonstrate the expected level of knowledge and include practical examples."""
+The questions must:
+- Be **specific, actionable, and measurable**
+- Test both **theoretical concepts** and **practical hands-on skills**
+- Reflect **real business problems and datasets** candidates may face
+- Cover **technical**, **analytical**, and **behavioral** aspects
+- Align with the difficulty level requested
+- Incorporate **current industry tools and practices** (e.g., SQL CTEs, pandas, scikit-learn, cloud data warehouses, BI tools, ML pipelines)
+- Include **coding problems, case studies, and scenario-based questions**
+- Provide **clear, structured, and detailed answers** with examples, code snippets, and reasoning
+- For coding problems: ensure examples are **tested, optimized, and production-ready**
+
+The answers should be **concise but thorough**, highlighting trade-offs, edge cases, and industry best practices."""
 
 # Difficulty level descriptions
 DIFFICULTY_DESC = {
-    'easy': 'Basic concepts, fundamental knowledge, entry-level understanding. Questions that test core concepts and basic problem-solving skills commonly asked in phone screens and initial interviews.',
-    'medium': 'Intermediate concepts, practical application, problem-solving skills. Questions that test hands-on experience, coding skills, and real-world problem-solving commonly asked in technical interviews.',
-    'hard': 'Advanced concepts, system design, complex problem-solving, deep expertise. Questions that test senior-level skills, architecture decisions, and complex scenarios commonly asked in senior/lead interviews.'
+    'easy': 'Tests basic concepts, syntax knowledge, and foundational problem-solving skills. Suitable for screening entry-level data roles. Covers basic SQL joins, simple Python scripts, descriptive statistics, and fundamental ML concepts.',
+    'medium': 'Tests intermediate concepts and applied problem-solving with real datasets. Includes optimizing SQL queries, building ML models, feature engineering, statistical inference, and analyzing business cases with data.',
+    'hard': 'Tests advanced expertise, system-level thinking, and complex scenario-solving. Includes designing scalable ML systems, optimizing data pipelines, advanced statistical modeling, experiment design, causal inference, and high-impact business analytics.'
 }
 
 # Question generation template
@@ -125,54 +135,63 @@ Job Requirements:
 - Experience: {experience_years} years
 - Location: {location}
 
-Context from industry research and current trends:
+Industry Context & Trends:
 {context}
 
-Generate {num_questions} {difficulty} level questions that are commonly asked in real interviews for this role. 
+Generate {num_questions} {difficulty} level interview questions that are tailored to **Data Science, Machine Learning, or Data Analytics** roles. 
+Ensure they represent **authentic interview situations** seen in the industry.
 
-DEFAULT TOPICS (always include questions from these areas):
-1. SQL - Database queries, optimization, data manipulation
-2. Python - Programming concepts, data structures, algorithms
-3. Machine Learning - ML algorithms, model evaluation, feature engineering
-4. Statistics - Statistical concepts, hypothesis testing, data analysis
+CORE TOPICS (Always Include):
+1. SQL – Complex joins, window functions, aggregations, query optimization, CTEs, real-world data cleaning.
+2. Python – pandas, NumPy, data manipulation, automation scripts, data pipeline logic.
+3. Machine Learning – Algorithm selection, hyperparameter tuning, evaluation metrics, handling imbalanced data, MLOps basics.
+4. Statistics – Probability, hypothesis testing, confidence intervals, statistical modeling, A/B testing.
 
-ADDITIONAL TOPICS (based on extracted skills):
+ADDITIONAL TOPICS (Based on Skills):
 {additional_topics}
 
-Focus on:
-- Technical skills specific to the role
-- Practical problem-solving scenarios with code examples
-- Behavioral questions relevant to the position
-- Current industry challenges and trends
-- Real-world application of skills
-- Include code snippets and examples where appropriate
+Focus Areas:
+- **Technical challenges**: realistic dataset manipulations, debugging code, optimizing SQL queries.
+- **Business problem-solving**: framing analytical approaches, designing experiments, deriving insights.
+- **Behavioral scenarios**: stakeholder communication, data-driven decision-making, handling ambiguous requirements.
+- **Current tools**: cloud platforms (AWS/GCP/Azure), BI dashboards, version control, API integration.
+- **Real-world datasets**: include messy, incomplete, or large-scale data scenarios.
+- **Code examples**: SQL queries, Python scripts, model training snippets.
 
 Difficulty Level: {difficulty_upper}
 Description: {difficulty_desc}
 
-IMPORTANT: You must respond with ONLY valid JSON in the following format. Do not include any other text or explanations:
+IMPORTANT: Respond ONLY with valid JSON in the following structure:
 
 {{
     "questions": [
         {{
-            "question": "Realistic interview question here?",
-            "answer": "Detailed answer with practical examples, code snippets, and industry context.",
-            "category": "Technical/Behavioral/System Design/Coding",
-            "skills": ["skill1", "skill2"],
-            "code_example": "Optional code snippet or example if applicable"
+            "question": "Example interview question?",
+            "answer": "Comprehensive answer with examples, reasoning, trade-offs, and best practices.",
+            "category": "Technical/Behavioral/Coding/Case Study",
+            "skills": ["SQL", "Python", "Machine Learning"],
+            "code_example": "Optional: working SQL/Python code snippet"
         }}
     ]
 }}"""
 
 # Question enhancement template
-QUESTION_ENHANCEMENT_TEMPLATE = """Enhance the following interview question with additional context and details from the provided research:
+QUESTION_ENHANCEMENT_TEMPLATE = """Enhance the following Data Science/Machine Learning/Data Analytics interview question and answer with deeper technical reasoning, industry relevance, and practical examples.
 
-Original Question: {question}
-Original Answer: {answer}
+Original Question:
+{question}
+
+Original Answer:
+{answer}
 
 Research Context:
 {context}
 
-Provide an enhanced answer that incorporates relevant information from the research while maintaining the original structure and accuracy.
+Requirements for Enhancement:
+- Add **real-world use cases** and explain **why the question matters** in industry.
+- Expand the **technical depth** (include equations, algorithms, or data structures where relevant).
+- Provide **edge cases**, common pitfalls, and alternative approaches.
+- Include **SQL/Python/ML code snippets** if applicable.
+- Ensure clarity for both **junior** and **senior-level** interviewees.
 
-Enhanced Answer:""" 
+Enhanced Answer:"""

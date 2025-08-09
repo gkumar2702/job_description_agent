@@ -11,7 +11,13 @@ from datetime import datetime
 
 from .components.email_collector import EmailCollector
 from .components.jd_parser import JDParser, JobDescription
-from .components.scraping_agent import ScrapingAgent
+# Scraping agent is optional (depends on external orchestration library)
+try:
+    from .components.scraping_agent import ScrapingAgent  # type: ignore
+    _SCRAPING_AVAILABLE = True
+except Exception:
+    ScrapingAgent = None  # type: ignore
+    _SCRAPING_AVAILABLE = False
 from .components.prompt_engine import PromptEngine
 from .components.question_bank import QuestionBank
 from .components.email_selector import EmailSelector
@@ -41,7 +47,7 @@ class JDAgent:
         # Initialize components
         self.email_collector = EmailCollector(config)
         self.jd_parser = JDParser()
-        self.scraping_agent = ScrapingAgent(config, self.database)
+        self.scraping_agent = ScrapingAgent(config, self.database) if _SCRAPING_AVAILABLE else None
         self.prompt_engine = PromptEngine(config)
         self.question_bank = QuestionBank()
         self.email_selector = EmailSelector(self.email_collector, self.jd_parser)
@@ -187,8 +193,12 @@ class JDAgent:
             
             # 2. Mine knowledge using LangGraph-based scraping agent
             logger.info("2. Mining knowledge from various sources...")
-            scraped_content = self.scraping_agent.run_scraping_workflow(jd)
-            logger.info(f"✅ Found {scraped_content.get('content_count', 0)} relevant content pieces")
+            if self.scraping_agent:
+                scraped_content = self.scraping_agent.run_scraping_workflow(jd)
+                logger.info(f"✅ Found {scraped_content.get('content_count', 0)} relevant content pieces")
+            else:
+                logger.warning("ScrapingAgent unavailable; skipping scraping step")
+                scraped_content = {'success': True, 'content_count': 0, 'error': 'scraping_unavailable', 'content': []}
             
             # 3. Generate questions
             logger.info("3. Generating interview questions...")
@@ -296,7 +306,11 @@ class JDAgent:
             duration = (end_time - start_time).total_seconds()
             
             # Get usage statistics
-            usage_stats = self.scraping_agent.get_usage_stats()
+            usage_stats = self.scraping_agent.get_usage_stats() if self.scraping_agent else {
+                'serpapi_calls': 0,
+                'max_serpapi_calls': 0,
+                'scraping_methods': [],
+            }
             
             results = {
                 'total_questions': len(questions),
@@ -340,9 +354,10 @@ class JDAgent:
             print(f"   Average relevance score: {avg_score:.2f}")
         
         # Print SerpAPI usage
-        usage_stats = self.scraping_agent.get_usage_stats()
-        print(f"   SerpAPI usage: {usage_stats['serpapi_calls']}/{usage_stats['max_serpapi_calls']} calls")
-        print(f"   Scraping methods: {', '.join(usage_stats['scraping_methods'])}")
+        if self.scraping_agent:
+            usage_stats = self.scraping_agent.get_usage_stats()
+            print(f"   SerpAPI usage: {usage_stats['serpapi_calls']}/{usage_stats['max_serpapi_calls']} calls")
+            print(f"   Scraping methods: {', '.join(usage_stats['scraping_methods'])}")
     
     def validate_configuration(self) -> bool:
         """
@@ -373,8 +388,7 @@ class JDAgent:
         if not self.jd_parser:
             errors.append("JDParser not initialized")
         
-        if not self.scraping_agent:
-            errors.append("ScrapingAgent not initialized")
+        # Scraping agent is optional; don't fail validation if unavailable
         
         if not self.prompt_engine:
             errors.append("PromptEngine not initialized")
