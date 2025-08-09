@@ -1,10 +1,11 @@
 # Core dependencies
-numpy>=1.26.0,<2.0.0  # Pin NumPy to a compatible version
+# spaCy 3.7 wheels expect NumPy 1.x; keep <2.0 to avoid ABI breaks
+numpy>=1.26.4,<2.0.0
 openai>=1.0.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.1.0
 google-api-python-client>=2.0.0
-spacy>=3.7.0
+spacy>=3.7.4,<3.8
 serpapi>=0.1.0
 pydantic>=2.0.0
 structlog>=23.0.0
@@ -18,7 +19,8 @@ asyncio-throttle>=1.0.0
 aiofiles>=23.0.0
 
 # Data processing and export
-pandas>=2.3.0
+# Pin pandas to a version compatible with NumPy 1.26
+pandas>=2.2.2,<2.3.0
 openpyxl>=3.1.0
 reportlab>=4.0.7
 
